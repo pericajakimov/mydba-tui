@@ -18,7 +18,7 @@ The Configuration subsystem should:
 - Be human-readable.
 - Support versioning.
 - Separate application settings from connection profiles.
-- Be portable across Linux and macOS.
+- Be portable across Linux, macOS, and Windows.
 - Remain backwards compatible whenever possible.
 
 ---
@@ -127,14 +127,20 @@ Themes never modify application behavior.
 
 # Configuration Storage
 
-Configuration files should remain plain text and human-readable.
+Configuration files are stored as YAML.
 
-The exact serialization format is an implementation detail, but it should support:
+YAML was chosen because it:
 
-- Easy manual editing
-- Comments (where supported)
-- Version control
-- Future extensibility
+- Is human-readable
+- Supports comments
+- Is easy to edit manually
+- Works well with version control
+- Is widely understood by DBAs and engineers
+
+The configuration directory contains:
+
+- `settings.yaml` — Application settings
+- `profiles.yaml` — Connection profiles
 
 ---
 
@@ -256,12 +262,31 @@ If configuration formats evolve, the application should migrate older configurat
 
 ---
 
+# Configuration Directory
+
+All configuration files are stored in:
+
+```
+~/.config/mydba/
+```
+
+This path is used consistently on all supported platforms:
+
+- Linux: `~/.config/mydba/`
+- macOS: `~/.config/mydba/`
+- Windows: `C:\Users\<username>\.config\mydba\`
+
+The decision to use a single path across platforms simplifies documentation, tooling, and portability for DBAs who work across multiple systems.
+
+---
+
 # Portability
 
 Configuration should work consistently on:
 
 - Linux
 - macOS
+- Windows
 
 Platform-specific behavior should be minimized.
 

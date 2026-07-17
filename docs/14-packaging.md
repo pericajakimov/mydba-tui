@@ -29,10 +29,11 @@ The initial supported platforms are:
 
 - Ubuntu 24.04 LTS
 - macOS
+- Windows (best-effort)
 
 Future Linux distributions may be supported if required.
 
-Windows is not a target platform.
+Windows is supported from the start at the application level (configuration, dependencies, and runtime all work cross-platform). Platform-specific packaging for Windows is deferred until demand justifies it.
 
 ---
 

@@ -1,0 +1,48 @@
+# Normalize line endings
+* text=auto eol=lf
+
+
+# Python files
+*.py text eol=lf
+
+
+# Shell scripts
+*.sh text eol=lf
+
+
+# Configuration files
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.ini text eol=lf
+
+
+# Documentation
+*.md text eol=lf
+
+
+# Makefiles
+Makefile text eol=lf
+
+
+# Images and binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+
+
+# Archives
+*.zip binary
+*.tar binary
+*.gz binary
+*.tar.gz binary
+
+
+# Do not export development files
+.vscode export-ignore
+.idea export-ignore
+tests export-ignore
+.github export-ignore

@@ -1,0 +1,6 @@
+id	username	status	created_at
+1	alice	active	2026-01-10 09:15:00
+2	bob	active	2026-01-11 10:30:00
+3	carol	inactive	2026-01-12 14:45:00
+4	david	active	2026-01-13 08:20:00
+5	eve	disabled	2026-01-14 16:10:00

@@ -1,0 +1,71 @@
+# mydba-tui light theme
+#
+# Light visual theme configuration.
+# Designed for bright terminal environments.
+
+[theme]
+
+name = "light"
+description = "Light mydba-tui theme"
+
+
+[colors]
+
+# Application background and foreground
+background = "#ffffff"
+foreground = "#2e3440"
+
+# Primary interface colors
+primary = "#2f5597"
+secondary = "#4f81bd"
+accent = "#0070c0"
+
+# Status colors
+success = "#548235"
+warning = "#bf9000"
+error = "#c00000"
+info = "#2f75b5"
+
+
+[panels]
+
+# Main workspace panels
+panel_background = "#f5f7fa"
+panel_border = "#b7c9e2"
+panel_title = "#0070c0"
+
+
+[navigation]
+
+# Object browser and menus
+selected_item = "#4f81bd"
+highlight = "#d9eaf7"
+disabled = "#808080"
+
+
+[sql]
+
+# SQL editor colors
+keyword = "#2f5597"
+function = "#7030a0"
+string = "#548235"
+number = "#bf9000"
+comment = "#808080"
+operator = "#c55a11"
+
+
+[status]
+
+# Footer and status bar
+connected = "#548235"
+disconnected = "#c00000"
+running = "#bf9000"
+
+
+[table]
+
+# Result table formatting
+header = "#2f5597"
+row = "#2e3440"
+alternate_row = "#f2f2f2"
+border = "#b7c9e2"

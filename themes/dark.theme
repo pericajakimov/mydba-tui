@@ -1,0 +1,71 @@
+# mydba-tui dark theme
+#
+# Dark visual theme configuration.
+# Designed for terminal environments and long DBA sessions.
+
+[theme]
+
+name = "dark"
+description = "Dark mydba-tui theme"
+
+
+[colors]
+
+# Application background and foreground
+background = "#1e1e1e"
+foreground = "#d4d4d4"
+
+# Primary interface colors
+primary = "#569cd6"
+secondary = "#4ec9b0"
+accent = "#9cdcfe"
+
+# Status colors
+success = "#b5cea8"
+warning = "#dcdcaa"
+error = "#f44747"
+info = "#4fc1ff"
+
+
+[panels]
+
+# Main workspace panels
+panel_background = "#252526"
+panel_border = "#3f3f46"
+panel_title = "#9cdcfe"
+
+
+[navigation]
+
+# Object browser and menus
+selected_item = "#264f78"
+highlight = "#094771"
+disabled = "#6a6a6a"
+
+
+[sql]
+
+# SQL editor colors
+keyword = "#569cd6"
+function = "#dcdcaa"
+string = "#ce9178"
+number = "#b5cea8"
+comment = "#6a9955"
+operator = "#d4d4d4"
+
+
+[status]
+
+# Footer and status bar
+connected = "#b5cea8"
+disconnected = "#f44747"
+running = "#dcdcaa"
+
+
+[table]
+
+# Result table formatting
+header = "#569cd6"
+row = "#d4d4d4"
+alternate_row = "#2d2d30"
+border = "#3f3f46"

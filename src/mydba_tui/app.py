@@ -6,11 +6,50 @@ configuration. Business logic and database operations should remain in
 dedicated service modules.
 """
 
+from functools import partial
+from operator import attrgetter
+
+from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.widgets import Footer, Header, Static
 
-from mydba_tui.config import Settings, load_settings
+from mydba_tui.config import Settings, load_settings, save_settings
 from mydba_tui.logging import setup_app_logging
+
+
+class MyDBAThemeProvider(Provider):
+    """Theme provider that marks the currently active theme."""
+
+    @property
+    def commands(self) -> list[tuple[Text, str, partial[None]]]:
+        """Build theme command list with active indicator."""
+        themes = self.app.available_themes
+        current = self.app.theme
+
+        def set_app_theme(name: str) -> None:
+            self.app.theme = name
+
+        result: list[tuple[Text, str, partial[None]]] = []
+        for theme in sorted(themes.values(), key=attrgetter("name")):
+            if theme.name == current:
+                display = Text.assemble(("● ", "bold green"), theme.name)
+            else:
+                display = Text.assemble(("  ", ""), theme.name)
+            result.append((display, theme.name, partial(set_app_theme, theme.name)))
+        return result
+
+    async def discover(self) -> Hits:
+        """Yield all themes for discovery."""
+        for display, _name, callback in self.commands:
+            yield DiscoveryHit(display, callback)
+
+    async def search(self, query: str) -> Hits:
+        """Search themes by name."""
+        matcher = self.matcher(query)
+        for display, name, callback in self.commands:
+            if (match := matcher.match(name)) > 0:
+                yield Hit(match, display, callback)
 
 
 class MyDBAApp(App[None]):
@@ -41,6 +80,23 @@ class MyDBAApp(App[None]):
         super().__init__()
         self.theme = self.settings.theme
         self._setup_logging()
+
+    def watch_theme(self, theme: str) -> None:
+        """Persist theme selection when the user changes it."""
+        if theme != self.settings.theme:
+            self.settings.theme = theme
+            save_settings(self.settings)
+
+    def search_themes(self) -> None:
+        """Show theme picker with active theme indicator."""
+        from textual.command import CommandPalette
+
+        self.push_screen(
+            CommandPalette(
+                providers=[MyDBAThemeProvider],
+                placeholder="Search for themes…",
+            ),
+        )
 
     def compose(self) -> ComposeResult:
         """Build the initial application layout."""

@@ -26,7 +26,7 @@ class Settings:
     """Application settings.
 
     Attributes:
-        theme: Name of the active visual theme.
+        theme: Textual theme name (e.g. "textual-dark", "nord", "dracula").
         log_level: Application log verbosity (DEBUG, INFO, WARNING, ERROR).
         sql_log_enabled: Whether SQL statements are written to the SQL log.
         page_size: Default number of rows in result sets.

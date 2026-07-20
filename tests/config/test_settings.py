@@ -9,7 +9,7 @@ def test_settings_defaults() -> None:
     """Settings should have sensible defaults."""
     settings = Settings()
 
-    assert settings.theme == "default"
+    assert settings.theme == "textual-dark"
     assert settings.log_level == "WARNING"
     assert settings.sql_log_enabled is True
     assert settings.page_size == 100
@@ -24,7 +24,7 @@ def test_load_settings_creates_file_on_first_run(tmp_path: Path) -> None:
     settings = load_settings(settings_path)
 
     assert settings_path.exists()
-    assert settings.theme == "default"
+    assert settings.theme == "textual-dark"
     assert settings.log_level == "WARNING"
 
 
@@ -70,7 +70,7 @@ def test_load_settings_handles_empty_file(tmp_path: Path) -> None:
 
     settings = load_settings(settings_path)
 
-    assert settings.theme == "default"
+    assert settings.theme == "textual-dark"
     assert settings.log_level == "WARNING"
 
 

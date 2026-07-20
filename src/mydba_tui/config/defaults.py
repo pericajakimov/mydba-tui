@@ -7,8 +7,8 @@ file exists. They represent sensible defaults for a first-time user.
 
 
 # Application defaults
-DEFAULT_THEME = "default"
-"""Default visual theme."""
+DEFAULT_THEME = "textual-dark"
+"""Default visual theme (Textual built-in theme name)."""
 
 DEFAULT_LOG_LEVEL = "WARNING"
 """Default application log level."""

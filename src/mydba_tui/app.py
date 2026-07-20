@@ -37,8 +37,9 @@ class MyDBAApp(App[None]):
 
     def __init__(self) -> None:
         """Initialize the application and load configuration."""
-        super().__init__()
         self.settings: Settings = load_settings()
+        super().__init__()
+        self.theme = self.settings.theme
         self._setup_logging()
 
     def compose(self) -> ComposeResult:

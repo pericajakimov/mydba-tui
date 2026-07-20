@@ -111,15 +111,28 @@ The initial implementation focuses on user grouping rules used by the developmen
 
 # Theme Settings
 
-Theme configuration controls only the visual appearance.
+The application uses Textual's built-in theme system.
 
-Examples include:
+The active theme is selected via the `theme` setting in `settings.yaml`.
 
-- Colors
-- Highlight styles
-- Status colors
-- Selection colors
-- Environment colors
+Available themes include:
+
+- `textual-dark` — Textual default dark theme (default)
+- `textual-light` — Textual default light theme
+- `nord` — Nord color scheme
+- `dracula` — Dracula color scheme
+- `gruvbox` — Gruvbox color scheme
+- `catppuccin-mocha` — Catppuccin dark variant
+- `catppuccin-latte` — Catppuccin light variant
+- `solarized-dark` — Solarized dark
+- `solarized-light` — Solarized light
+- `tokyo-night` — Tokyo Night
+- `monokai` — Monokai
+- `rose-pine` — Rosé Pine
+
+Users can also switch themes at runtime using the Textual command palette (Ctrl+P).
+
+Future versions will include a custom MySQL-aware syntax highlighting theme for the SQL Workspace editor.
 
 Themes never modify application behavior.
 

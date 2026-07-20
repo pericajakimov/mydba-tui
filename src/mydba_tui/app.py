@@ -12,10 +12,18 @@ from operator import attrgetter
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.command import DiscoveryHit, Hit, Hits, Provider
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Footer, Header
 
 from mydba_tui.config import Settings, load_settings, save_settings
 from mydba_tui.logging import setup_app_logging
+from mydba_tui.ui.screens import (
+    AdministrationScreen,
+    BrowserScreen,
+    HomeScreen,
+    MonitoringScreen,
+    SettingsScreen,
+    WorkspaceScreen,
+)
 
 
 class MyDBAThemeProvider(Provider):
@@ -68,11 +76,19 @@ class MyDBAApp(App[None]):
         layout: vertical;
     }
 
-    #main-container {
+    #home-menu {
         height: 1fr;
-        padding: 1;
+        padding: 1 2;
     }
     """
+
+    SCREENS = {
+        "browser": BrowserScreen,
+        "workspace": WorkspaceScreen,
+        "administration": AdministrationScreen,
+        "monitoring": MonitoringScreen,
+        "settings": SettingsScreen,
+    }
 
     def __init__(self) -> None:
         """Initialize the application and load configuration."""
@@ -80,6 +96,10 @@ class MyDBAApp(App[None]):
         super().__init__()
         self.theme = self.settings.theme
         self._setup_logging()
+
+    def on_mount(self) -> None:
+        """Push the home screen on mount."""
+        self.push_screen(HomeScreen())
 
     def watch_theme(self, theme: str) -> None:
         """Persist theme selection when the user changes it."""
@@ -99,14 +119,8 @@ class MyDBAApp(App[None]):
         )
 
     def compose(self) -> ComposeResult:
-        """Build the initial application layout."""
+        """Build the default screen layout (used before home screen mounts)."""
         yield Header()
-
-        yield Static(
-            "Welcome to mydba\n\nDatabase administration starts here.",
-            id="main-container",
-        )
-
         yield Footer()
 
     def _setup_logging(self) -> None:

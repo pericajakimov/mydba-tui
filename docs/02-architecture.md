@@ -300,7 +300,7 @@ Contains:
 
 ## SQL Log
 
-Contains only SQL statements executed against the server.
+Contains every SQL statement executed against the server.
 
 This includes:
 
@@ -308,6 +308,15 @@ This includes:
 - Metadata queries.
 - Monitoring queries.
 - Internal Browser queries.
+
+Each entry records:
+
+- Timestamp.
+- Execution duration.
+- Source module (e.g. `browser.tables`, `server.detection`, `workspace.execute`).
+- SQL text collapsed to a single line.
+
+Multi-line SQL from `.sql` files is collapsed into one line for grep-friendly log output.
 
 The SQL log never contains Python logging messages.
 

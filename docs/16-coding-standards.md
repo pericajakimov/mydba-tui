@@ -254,13 +254,24 @@ Dynamic SQL should only be generated when required.
 
 Every SQL statement executed against the server must be written to the SQL log.
 
-The SQL log contains:
+Each SQL log entry contains:
 
-- SQL text
 - Timestamp
 - Execution duration
+- Source module identifier (e.g. `browser.tables`, `server.detection`)
+- SQL text collapsed to a single line
 
-The SQL log intentionally contains nothing else.
+The source module helps identify which functionality generated the query.
+
+Multi-line SQL loaded from `.sql` files is collapsed (all whitespace replaced with a single space) before writing to ensure one entry per line.
+
+Example:
+
+```
+2024-01-15 10:23:45 | 0.023s | browser.tables | SELECT table_name FROM information_schema.tables WHERE table_schema = 'payments'
+```
+
+The SQL log intentionally contains no Python debug messages.
 
 ---
 

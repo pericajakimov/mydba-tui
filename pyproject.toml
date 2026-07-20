@@ -90,6 +90,10 @@ select = [
 ]
 
 
+[tool.ruff.lint.isort]
+known-first-party = ["mydba_tui"]
+
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

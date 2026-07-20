@@ -141,6 +141,8 @@ The configuration directory contains:
 
 - `settings.yaml` — Application settings
 - `profiles.yaml` — Connection profiles
+- `logs/app.log` — Application log (internal events, errors, debug)
+- `logs/sql.log` — SQL log (every query executed against the server)
 
 ---
 
@@ -200,19 +202,24 @@ The environment determines the color displayed in the application header.
 
 # Logging Configuration
 
-Configuration should allow independent control of:
+Two independent logging systems are configured via `settings.yaml`:
 
-- SQL logging
-- Application logging
+## Application Log
 
-Possible options include:
+- File: `~/.config/mydba/logs/app.log`
+- Controlled by: `log_level` setting (DEBUG, INFO, WARNING, ERROR)
+- Contains internal events, errors, and debug information
+- Uses Python's standard logging framework
 
-- Enable or disable SQL logging
-- SQL log location
-- Application log location
-- Log verbosity
+## SQL Log
 
-SQL logging is enabled by default during early development to ensure complete transparency of generated SQL.
+- File: `~/.config/mydba/logs/sql.log`
+- Controlled by: `sql_log_enabled` setting (true/false)
+- Contains every SQL statement executed against the server
+- Format: `timestamp | duration | source | sql`
+- SQL is collapsed to one line per entry for grep-friendly output
+
+SQL logging is enabled by default to ensure complete transparency of generated SQL.
 
 ---
 

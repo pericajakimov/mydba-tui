@@ -10,6 +10,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, Static
 
 from mydba_tui.config import Settings, load_settings
+from mydba_tui.logging import setup_app_logging
 
 
 class MyDBAApp(App[None]):
@@ -38,6 +39,7 @@ class MyDBAApp(App[None]):
         """Initialize the application and load configuration."""
         super().__init__()
         self.settings: Settings = load_settings()
+        self._setup_logging()
 
     def compose(self) -> ComposeResult:
         """Build the initial application layout."""
@@ -49,6 +51,10 @@ class MyDBAApp(App[None]):
         )
 
         yield Footer()
+
+    def _setup_logging(self) -> None:
+        """Initialize application logging based on settings."""
+        setup_app_logging(level=self.settings.log_level)
 
 
 def main() -> None:

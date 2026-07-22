@@ -5,7 +5,6 @@ These constants define the initial settings used when no configuration
 file exists. They represent sensible defaults for a first-time user.
 """
 
-
 # Application defaults
 DEFAULT_THEME = "textual-dark"
 """Default visual theme (Textual built-in theme name)."""

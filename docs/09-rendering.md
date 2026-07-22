@@ -261,7 +261,7 @@ Recommended mapping:
 |-------------|-------|
 | Production | Red |
 | Stage | Orange |
-| QA | Blue |
+| QA | Light Blue |
 | Development | Green |
 
 The current environment remains visible in the application header.

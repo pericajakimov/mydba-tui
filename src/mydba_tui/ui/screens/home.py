@@ -20,6 +20,7 @@ class HomeScreen(Screen[None]):
         Binding("f3", "open_admin", "Admin"),
         Binding("f4", "open_monitoring", "Monitor"),
         Binding("f5", "open_settings", "Settings"),
+        Binding("c", "open_profiles", "Connections"),
         Binding("f10", "quit", "Exit"),
     ]
 
@@ -35,6 +36,7 @@ class HomeScreen(Screen[None]):
             "  [bold]F3[/bold]  Administration\n"
             "  [bold]F4[/bold]  Monitoring\n"
             "  [bold]F5[/bold]  Settings\n"
+            "  [bold]c[/bold]   Connections\n"
             "\n"
             "  [bold]F10[/bold] Exit\n"
             "\n"
@@ -63,6 +65,10 @@ class HomeScreen(Screen[None]):
     def action_open_settings(self) -> None:
         """Navigate to the Settings screen."""
         self.app.push_screen("settings")
+
+    def action_open_profiles(self) -> None:
+        """Navigate to the Connection Profiles screen."""
+        self.app.push_screen("profiles")
 
     def action_quit(self) -> None:
         """Exit the application."""

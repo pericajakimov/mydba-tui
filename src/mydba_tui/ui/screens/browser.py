@@ -21,8 +21,7 @@ class BrowserScreen(Screen[None]):
         """Build the browser screen layout."""
         yield Header()
         yield Static(
-            "[b]Object Browser[/b]\n\n"
-            "  [dim]Connect to a database to browse objects.[/dim]",
+            "[b]Object Browser[/b]\n\n  [dim]Connect to a database to browse objects.[/dim]",
             id="browser-content",
         )
         yield Footer()

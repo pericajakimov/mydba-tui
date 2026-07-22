@@ -135,9 +135,17 @@ This allows users to reuse credentials already managed by standard MySQL tools.
 
 # SSL Support
 
-If SSL configuration is provided in a profile, it should be used automatically.
+SSL behavior is controlled by the `ssl_mode` setting in each profile.
 
-The application should support the same SSL capabilities offered by the underlying MySQL driver.
+Supported modes:
+
+- DISABLED — No SSL connection
+- PREFERRED — Use SSL if the server supports it (default)
+- REQUIRED — Require SSL, do not verify certificate
+- VERIFY_CA — Require SSL and verify server CA certificate
+- VERIFY_IDENTITY — Require SSL, verify CA, and verify server hostname
+
+When a CA certificate, client certificate, or client key is provided, they are passed to the MySQL driver.
 
 SSL validation errors are reported exactly as returned by the driver.
 

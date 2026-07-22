@@ -21,6 +21,7 @@ from mydba_tui.ui.screens import (
     BrowserScreen,
     HomeScreen,
     MonitoringScreen,
+    ProfilesScreen,
     SettingsScreen,
     WorkspaceScreen,
 )
@@ -88,6 +89,7 @@ class MyDBAApp(App[None]):
         "administration": AdministrationScreen,
         "monitoring": MonitoringScreen,
         "settings": SettingsScreen,
+        "profiles": ProfilesScreen,
     }
 
     def __init__(self) -> None:

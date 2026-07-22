@@ -21,8 +21,7 @@ class SettingsScreen(Screen[None]):
         """Build the settings screen layout."""
         yield Header()
         yield Static(
-            "[b]Settings[/b]\n\n"
-            "  [dim]Application settings will be available here.[/dim]",
+            "[b]Settings[/b]\n\n  [dim]Application settings will be available here.[/dim]",
             id="settings-content",
         )
         yield Footer()

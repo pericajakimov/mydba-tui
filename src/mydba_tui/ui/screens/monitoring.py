@@ -21,8 +21,7 @@ class MonitoringScreen(Screen[None]):
         """Build the monitoring screen layout."""
         yield Header()
         yield Static(
-            "[b]Monitoring[/b]\n\n"
-            "  [dim]Connect to a database to view live metrics.[/dim]",
+            "[b]Monitoring[/b]\n\n  [dim]Connect to a database to view live metrics.[/dim]",
             id="monitoring-content",
         )
         yield Footer()

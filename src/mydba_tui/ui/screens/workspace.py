@@ -21,8 +21,7 @@ class WorkspaceScreen(Screen[None]):
         """Build the workspace screen layout."""
         yield Header()
         yield Static(
-            "[b]SQL Workspace[/b]\n\n"
-            "  [dim]Connect to a database to execute SQL.[/dim]",
+            "[b]SQL Workspace[/b]\n\n  [dim]Connect to a database to execute SQL.[/dim]",
             id="workspace-content",
         )
         yield Footer()

@@ -49,11 +49,17 @@ A profile may contain:
 - Port
 - Username (optional)
 - Default database (optional)
+- Connect timeout in seconds (default: 10)
+- Compressed protocol (default: off)
+- Init command (optional, SQL executed on connect)
 - SSL configuration (optional)
 - SSH tunnel configuration (optional)
 - Stored password (optional)
 
 Passwords should not be stored by default.
+
+Autocommit is always enabled. Transaction control is handled explicitly
+by the user via BEGIN/COMMIT or session variable changes.
 
 ---
 
@@ -102,7 +108,7 @@ Recommended colors:
 |-------------|-------|
 | Production | Red |
 | Stage | Orange |
-| QA | Blue |
+| QA | Light Blue |
 | Development | Green |
 
 ---
@@ -163,12 +169,60 @@ On success:
 The Connection Manager supports:
 
 - Username/password authentication
-- SSL authentication
+- SSL/TLS connections (with configurable ssl-mode)
 - SSH tunnels
+
+Supported SSL modes (matching MySQL `--ssl-mode`):
+
+- DISABLED — No SSL
+- PREFERRED — Use SSL if server supports it (default)
+- REQUIRED — Require SSL, do not verify certificate
+- VERIFY_CA — Require SSL and verify server CA certificate
+- VERIFY_IDENTITY — Require SSL, verify CA, and verify server hostname
 
 Authentication failures are reported exactly as returned by MySQL.
 
 No custom interpretation is performed.
+
+---
+
+# Connection Options
+
+## Connect Timeout
+
+Time in seconds to wait for a connection to be established.
+
+Default: 10 seconds.
+
+Useful for detecting unreachable servers quickly in production environments.
+
+## Compressed Protocol
+
+When enabled, uses MySQL protocol compression for data transfer.
+
+Default: off.
+
+Recommended when connecting over high-latency networks or WAN links. Not recommended for local or low-latency connections as compression adds CPU overhead.
+
+## Init Command
+
+An optional SQL statement executed immediately after a successful connection.
+
+Examples:
+
+```
+SET SESSION wait_timeout=28800
+SET SESSION group_concat_max_len=1048576
+SET SESSION sql_mode='TRADITIONAL'
+```
+
+This allows customizing the session environment without manual intervention after each connection.
+
+## Autocommit
+
+Autocommit is always enabled and is not configurable per profile.
+
+This matches the default MySQL client behavior. When explicit transaction control is needed, the user should use `BEGIN`/`COMMIT` statements or modify the session variable directly.
 
 ---
 

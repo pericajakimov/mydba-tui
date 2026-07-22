@@ -8,7 +8,7 @@ Each profile maps to exactly one MySQL-compatible server.
 from dataclasses import asdict, dataclass
 from enum import Enum
 
-from mydba_tui.config.obfuscate import deobfuscate, obfuscate
+from mydba_tui.utils.obfuscate import deobfuscate, obfuscate
 
 
 class Environment(Enum):

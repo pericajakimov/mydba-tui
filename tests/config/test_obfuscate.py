@@ -1,6 +1,6 @@
 """Tests for password obfuscation."""
 
-from mydba_tui.config.obfuscate import deobfuscate, obfuscate
+from mydba_tui.utils.obfuscate import deobfuscate, obfuscate
 
 
 def test_roundtrip_simple() -> None:

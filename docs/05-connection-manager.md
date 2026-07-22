@@ -149,16 +149,37 @@ Display the profile list.
 
 User selects a profile.
 
-If the profile already contains a username:
+The application resolves credentials from all available sources:
+
+1. Profile fields (username, password).
+2. Login path from `.mylogin.cnf`.
+3. `~/.my.cnf` or the configured option file (`[client]` section).
+
+If all required credentials are available:
+
+- Connect immediately.
+
+If only the username is known (from profile or config file):
 
 - Prompt only for password.
 
-Otherwise:
+If neither username nor password is available:
 
-- Prompt for username.
-- Prompt for password.
+- Prompt for both.
+
+The credentials prompt pre-populates any fields already known.
 
 Attempt connection.
+
+On authentication failure:
+
+- Display the MySQL error.
+- Show the credentials prompt to correct or provide credentials.
+
+On other connection failure (unreachable host, timeout):
+
+- Display the MySQL error.
+- Remain on the profile list.
 
 On success:
 
@@ -350,10 +371,14 @@ When both profile fields and config file values are available:
 
 1. Explicit profile fields (host, port, username, password) always win.
 2. Login path credentials from `.mylogin.cnf`.
-3. Option file/group values from `.my.cnf`.
+3. Explicit option file/group values from a custom `.my.cnf`.
+4. Automatic fallback to `~/.my.cnf` if it exists (same as native `mysql` client).
+
+If no credentials are available from any source, the user is prompted.
 
 This allows DBAs to reuse existing credentials already configured for
-other MySQL tools (`mysql`, `mysqldump`, `mysqlsh`, etc.).
+other MySQL tools (`mysql`, `mysqldump`, `mysqlsh`, etc.) without any
+additional configuration in mydba.
 
 ---
 
@@ -444,8 +469,15 @@ A successful reconnect results in a new MySQL connection ID.
 
 If a connection attempt fails:
 
-- Display the MySQL error.
-- Return to the profile selection screen.
+- Display the MySQL error message.
+
+Authentication failures (access denied):
+
+- Show the credentials prompt so the user can correct or provide credentials.
+
+Other failures (unreachable host, timeout, network error):
+
+- Remain on the profile selection screen.
 
 The application does not attempt automatic retries.
 

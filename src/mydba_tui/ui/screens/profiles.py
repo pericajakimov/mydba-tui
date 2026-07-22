@@ -13,6 +13,7 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
 from mydba_tui.config.profiles import load_profiles, remove_profile, save_profiles
 from mydba_tui.models.profile import Profile
+from mydba_tui.ui.screens.password_prompt import Credentials, CredentialsPromptScreen
 from mydba_tui.ui.screens.profile_form import ProfileFormScreen
 from mydba_tui.ui.widgets import ConfirmDialog
 
@@ -32,7 +33,6 @@ class ProfilesScreen(Screen[None]):
         Binding("a", "add_profile", "Add"),
         Binding("e", "edit_profile", "Edit"),
         Binding("d", "delete_profile", "Delete"),
-        Binding("enter", "select_profile", "Connect"),
         Binding("escape", "go_back", "Back"),
         Binding("f10", "quit", "Exit"),
     ]
@@ -161,12 +161,126 @@ class ProfilesScreen(Screen[None]):
             callback=on_confirm,
         )
 
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle Enter on a list item — attempt connection."""
+        self.action_select_profile()
+
     def action_select_profile(self) -> None:
-        """Select a profile for connection (placeholder)."""
+        """Select a profile and attempt connection."""
         name = self._get_selected_profile_name()
         if name is None:
             return
-        self.notify(f"Connection to '{name}' not yet implemented.", title="Connect")
+
+        profiles = load_profiles()
+        profile = next((p for p in profiles if p.name == name), None)
+        if profile is None:
+            return
+
+        # Resolve effective credentials from all sources
+        username, password = self._resolve_credentials(profile)
+
+        if username and password:
+            # All credentials available — connect directly
+            self._attempt_connection(profile, username, password)
+        else:
+            # Missing info — prompt only for what's needed
+            self.app.push_screen(
+                CredentialsPromptScreen(
+                    profile_name=profile.name,
+                    host=profile.host,
+                    username=username,
+                    password=password,
+                ),
+                callback=lambda creds: self._on_credentials(profile, creds),
+            )
+
+    @staticmethod
+    def _resolve_credentials(profile: Profile) -> tuple[str, str]:
+        """Determine effective username and password from all sources.
+
+        Priority:
+        1. Explicit profile fields.
+        2. login_path (we can't read .mylogin.cnf, so assume it provides both).
+        3. option_file or ~/.my.cnf parsed for [client] credentials.
+
+        Returns:
+            Tuple of (username, password) with empty string for missing values.
+        """
+        from mydba_tui.connection.mycnf import read_mycnf_credentials
+
+        # Start with profile values
+        username = profile.username
+        password = profile.password
+
+        # login_path — assume it provides everything (encrypted, can't read)
+        if profile.login_path:
+            return username or "login_path", password or "login_path"
+
+        # Read from config files to fill gaps
+        if not username or not password:
+            creds = read_mycnf_credentials(
+                option_file=profile.option_file,
+                option_group=profile.option_group,
+            )
+            if not username and creds.user:
+                username = creds.user
+            if not password and creds.password:
+                password = creds.password
+
+        return username, password
+
+    def _on_credentials(self, profile: Profile, creds: "Credentials | None") -> None:
+        """Handle credentials prompt result."""
+        if creds is None:
+            return
+        self._attempt_connection(profile, creds.username, creds.password)
+
+    def _attempt_connection(
+        self, profile: Profile, username: str, password: str
+    ) -> None:
+        """Try to connect using the profile and handle success/failure.
+
+        On auth failure, shows the credentials prompt so the user can
+        provide or correct credentials. On other errors, shows the
+        MySQL error message.
+        """
+        from mysql.connector.errors import Error as MySQLError
+
+        from mydba_tui.connection import connect
+
+        # Override profile credentials with runtime values only if provided
+        if username:
+            profile.username = username
+
+        try:
+            connection = connect(profile, password)
+        except MySQLError as e:
+            # Error codes 1044, 1045, 1698 are auth-related
+            if e.errno in (1044, 1045, 1698):
+                # Auth failed — prompt for credentials
+                self.app.push_screen(
+                    CredentialsPromptScreen(
+                        profile_name=profile.name,
+                        host=profile.host,
+                        username=profile.username,
+                        password="",
+                    ),
+                    callback=lambda creds: self._on_credentials(profile, creds),
+                )
+                self.notify(str(e.msg), severity="error", timeout=5)
+            else:
+                self.notify(
+                    f"Connection failed:\n{e}",
+                    severity="error",
+                    timeout=10,
+                )
+            return
+
+        # Store connection on the app for other screens to use
+        self.app.db_connection = connection  # type: ignore[attr-defined]
+        self.app.active_profile = profile  # type: ignore[attr-defined]
+        self.notify(f"Connected to {profile.name}", severity="information")
+        self.app.pop_screen()  # Return to home
 
     def action_go_back(self) -> None:
         """Return to the home screen."""

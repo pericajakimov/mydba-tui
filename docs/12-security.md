@@ -116,6 +116,10 @@ Typical use cases include:
 - Dedicated monitoring accounts
 - Read-only operational accounts
 
+Stored passwords are obfuscated (XOR + base64 with a machine-derived key)
+to prevent plaintext exposure in configuration files. This is not
+cryptographic security but prevents casual reading.
+
 Stored passwords should never be required for normal operation.
 
 ---
@@ -126,10 +130,16 @@ Stored passwords should never be required for normal operation.
 
 Supported sources include:
 
-- `.my.cnf`
-- `.mylogin.cnf`
+- `.mylogin.cnf` (via `login_path` in profile)
+- `.my.cnf` (via `option_file` and `option_group` in profile)
 
 This allows users to reuse credentials already managed by standard MySQL tools.
+
+Priority when connecting:
+
+1. Explicit profile fields always win.
+2. Login path credentials from `.mylogin.cnf`.
+3. Option file/group values from `.my.cnf`.
 
 ---
 

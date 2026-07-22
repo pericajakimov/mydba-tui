@@ -52,9 +52,12 @@ A profile may contain:
 - Connect timeout in seconds (default: 10)
 - Compressed protocol (default: off)
 - Init command (optional, SQL executed on connect)
+- Login path (optional, reads credentials from .mylogin.cnf)
+- Option file (optional, path to a .my.cnf file)
+- Option group suffix (optional, like --defaults-group-suffix)
 - SSL configuration (optional)
 - SSH tunnel configuration (optional)
-- Stored password (optional)
+- Password (optional, obfuscated if provided)
 
 Passwords should not be stored by default.
 
@@ -245,6 +248,30 @@ Every connection.
 
 This reduces the risk of credential leakage on shared systems.
 
+## Password Obfuscation
+
+When a password is present in a profile, it is obfuscated using XOR with
+a machine-derived key and base64 encoding. This prevents casual reading
+of passwords in the YAML file.
+
+Stored passwords appear as:
+
+```yaml
+password: obf:PaAzNksztZT/1g==
+```
+
+If the password field is left empty, the user is prompted on every
+connection. If a password is entered, it is saved automatically.
+
+This is not cryptographic security. It is intended to avoid plaintext
+passwords being immediately visible when viewing configuration files.
+
+The obfuscation key is derived from the machine identity. Passwords
+obfuscated on one machine cannot be decoded on another.
+
+For stronger credential management, use `.mylogin.cnf` (via login_path)
+or leave the password empty and enter it on every connection.
+
 ---
 
 # Shared Tooling Servers
@@ -278,14 +305,55 @@ These are optional and should never affect shared environments.
 
 # Existing MySQL Configuration
 
-The Connection Manager should support existing MySQL configuration mechanisms.
+The Connection Manager supports existing MySQL configuration mechanisms.
 
-Examples include:
+## Login Path (.mylogin.cnf)
 
-- `.my.cnf`
-- `.mylogin.cnf`
+A profile can reference a login path name. This reads encrypted credentials
+stored by `mysql_config_editor`, the same mechanism used by the native
+MySQL client tools.
 
-This allows DBAs to reuse existing credentials already configured for other MySQL tools.
+Equivalent to: `mysql --login-path=name`
+
+Example profile:
+
+```yaml
+- name: Payments_prod
+  environment: prod
+  login_path: payments_prod
+```
+
+The password (and optionally host/user) is read from `.mylogin.cnf`
+without storing it in the mydba profile.
+
+## Option File (.my.cnf)
+
+A profile can reference a specific `.my.cnf` file to read connection
+defaults from a named group.
+
+Equivalent to: `mysql --defaults-file=/path --defaults-group-suffix=_name`
+
+Example profile:
+
+```yaml
+- name: Reporting
+  environment: prod
+  option_file: ~/.my.cnf
+  option_group: _reporting
+```
+
+This reads `[client]` and `[client_reporting]` groups from the specified file.
+
+## Priority
+
+When both profile fields and config file values are available:
+
+1. Explicit profile fields (host, port, username, password) always win.
+2. Login path credentials from `.mylogin.cnf`.
+3. Option file/group values from `.my.cnf`.
+
+This allows DBAs to reuse existing credentials already configured for
+other MySQL tools (`mysql`, `mysqldump`, `mysqlsh`, etc.).
 
 ---
 

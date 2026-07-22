@@ -8,6 +8,8 @@ Each profile maps to exactly one MySQL-compatible server.
 from dataclasses import asdict, dataclass
 from enum import Enum
 
+from mydba_tui.config.obfuscate import deobfuscate, obfuscate
+
 
 class Environment(Enum):
     """Supported deployment environments.
@@ -66,15 +68,13 @@ class SshTunnelConfig:
         port: SSH server port.
         username: SSH username.
         key_file: Path to the SSH private key file.
-        store_password: Whether the SSH password is stored.
-        password: SSH password (empty string if not stored).
+        password: SSH password (empty means prompt or use key).
     """
 
     host: str = ""
     port: int = 22
     username: str = ""
     key_file: str = ""
-    store_password: bool = False
     password: str = ""
 
 
@@ -92,10 +92,12 @@ class Profile:
         connect_timeout: Connection timeout in seconds (default: 10).
         compress: Whether to use compressed protocol.
         init_command: SQL to execute immediately after connecting.
+        login_path: Login path name from .mylogin.cnf (like --login-path).
+        option_file: Path to a .my.cnf file (like --defaults-file).
+        option_group: Group suffix for .my.cnf (like --defaults-group-suffix).
         ssl: SSL configuration (optional).
         ssh_tunnel: SSH tunnel configuration (optional).
-        store_password: Whether the password is stored in the profile.
-        password: Stored password (empty string if not stored).
+        password: MySQL password (empty means prompt on connect).
     """
 
     name: str = ""
@@ -107,9 +109,11 @@ class Profile:
     connect_timeout: int = 10
     compress: bool = False
     init_command: str = ""
+    login_path: str = ""
+    option_file: str = ""
+    option_group: str = ""
     ssl: SslConfig | None = None
     ssh_tunnel: SshTunnelConfig | None = None
-    store_password: bool = False
     password: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -138,17 +142,23 @@ class Profile:
             data["compress"] = True
         if self.init_command:
             data["init_command"] = self.init_command
+        if self.login_path:
+            data["login_path"] = self.login_path
+        if self.option_file:
+            data["option_file"] = self.option_file
+        if self.option_group:
+            data["option_group"] = self.option_group
         if self.ssl is not None:
             data["ssl"] = asdict(self.ssl)
         if self.ssh_tunnel is not None:
             ssh_data = asdict(self.ssh_tunnel)
-            if not self.ssh_tunnel.store_password:
+            if self.ssh_tunnel.password:
+                ssh_data["password"] = obfuscate(self.ssh_tunnel.password)
+            else:
                 ssh_data.pop("password", None)
-                ssh_data.pop("store_password", None)
             data["ssh_tunnel"] = ssh_data
-        if self.store_password:
-            data["store_password"] = True
-            data["password"] = self.password
+        if self.password:
+            data["password"] = obfuscate(self.password)
 
         return data
 
@@ -172,6 +182,8 @@ class Profile:
         ssh_data = data.get("ssh_tunnel")
         if isinstance(ssh_data, dict):
             ssh_fields = {k: v for k, v in ssh_data.items() if hasattr(SshTunnelConfig, k)}
+            if "password" in ssh_fields:
+                ssh_fields["password"] = deobfuscate(str(ssh_fields["password"]))
             ssh_tunnel = SshTunnelConfig(**ssh_fields)
         else:
             ssh_tunnel = None
@@ -192,8 +204,10 @@ class Profile:
             connect_timeout=connect_timeout,
             compress=bool(data.get("compress", False)),
             init_command=str(data.get("init_command", "")),
+            login_path=str(data.get("login_path", "")),
+            option_file=str(data.get("option_file", "")),
+            option_group=str(data.get("option_group", "")),
             ssl=ssl,
             ssh_tunnel=ssh_tunnel,
-            store_password=bool(data.get("store_password", False)),
-            password=str(data.get("password", "")),
+            password=deobfuscate(str(data.get("password", ""))),
         )

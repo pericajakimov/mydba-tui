@@ -15,7 +15,6 @@ def test_profile_defaults() -> None:
     assert profile.default_database == ""
     assert profile.ssl is None
     assert profile.ssh_tunnel is None
-    assert profile.store_password is False
     assert profile.password == ""
 
 
@@ -49,7 +48,6 @@ def test_profile_from_dict_full() -> None:
             "username": "dba",
             "key_file": "~/.ssh/id_rsa",
         },
-        "store_password": False,
     }
     profile = Profile.from_dict(data)
 
@@ -104,14 +102,15 @@ def test_profile_to_dict_with_ssl() -> None:
 
 
 def test_profile_to_dict_with_password() -> None:
-    """to_dict should include password only when store_password is True."""
-    profile_no_store = Profile(name="no_pass", password="secret")
-    assert "password" not in profile_no_store.to_dict()
+    """to_dict should include obfuscated password when non-empty."""
+    profile_no_pass = Profile(name="no_pass", password="")
+    assert "password" not in profile_no_pass.to_dict()
 
-    profile_store = Profile(name="has_pass", store_password=True, password="secret")
-    data = profile_store.to_dict()
-    assert data["password"] == "secret"
-    assert data["store_password"] is True
+    profile_with_pass = Profile(name="has_pass", password="secret")
+    data = profile_with_pass.to_dict()
+    assert isinstance(data["password"], str)
+    assert data["password"].startswith("obf:")
+    assert data["password"] != "secret"
 
 
 def test_environment_enum_values() -> None:
@@ -149,7 +148,6 @@ def test_ssh_tunnel_config_defaults() -> None:
     assert ssh.port == 22
     assert ssh.username == ""
     assert ssh.key_file == ""
-    assert ssh.store_password is False
     assert ssh.password == ""
 
 

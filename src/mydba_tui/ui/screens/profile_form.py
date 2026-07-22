@@ -165,22 +165,14 @@ class ProfileFormScreen(ModalScreen[Profile | None]):
                     "[dim]Password storage is discouraged on shared systems.[/dim]",
                     classes="section-note",
                 )
-                with Horizontal(classes="form-row"):
-                    with Vertical(classes="form-field"):
-                        yield Label("MySQL Password:", classes="form-label")
-                        yield Input(
-                            value=p.password,
-                            placeholder="(leave empty to prompt on connect)",
-                            password=True,
-                            id="input-password",
-                            classes="form-input",
-                        )
-                    with Vertical(classes="form-field-last"):
-                        yield Label("Save:", classes="form-label")
-                        yield Switch(
-                            value=p.store_password,
-                            id="input-store-password",
-                        )
+                yield Label("MySQL Password:", classes="form-label")
+                yield Input(
+                    value=p.password,
+                    placeholder="(leave empty to prompt on connect)",
+                    password=True,
+                    id="input-password",
+                    classes="form-input",
+                )
 
                 with Horizontal(classes="form-row"):
                     with Vertical(classes="form-field"):
@@ -205,6 +197,32 @@ class ProfileFormScreen(ModalScreen[Profile | None]):
                     id="input-init-command",
                     classes="form-input",
                 )
+
+                yield Label("Login Path (.mylogin.cnf):", classes="form-label")
+                yield Input(
+                    value=p.login_path,
+                    placeholder="e.g. payments_prod (from mysql_config_editor)",
+                    id="input-login-path",
+                    classes="form-input",
+                )
+
+                with Horizontal(classes="form-row"):
+                    with Vertical(classes="form-field"):
+                        yield Label("Option File (.my.cnf):", classes="form-label")
+                        yield Input(
+                            value=p.option_file,
+                            placeholder="~/.my.cnf",
+                            id="input-option-file",
+                            classes="form-input",
+                        )
+                    with Vertical(classes="form-field-last"):
+                        yield Label("Group Suffix:", classes="form-label")
+                        yield Input(
+                            value=p.option_group,
+                            placeholder="e.g. _payments",
+                            id="input-option-group",
+                            classes="form-input",
+                        )
 
             # SSL options
             with Collapsible(
@@ -293,22 +311,14 @@ class ProfileFormScreen(ModalScreen[Profile | None]):
                             classes="form-input",
                         )
 
-                with Horizontal(classes="form-row"):
-                    with Vertical(classes="form-field"):
-                        yield Label("SSH Password:", classes="form-label")
-                        yield Input(
-                            value=p.ssh_tunnel.password if p.ssh_tunnel else "",
-                            placeholder="(leave empty to prompt or use key)",
-                            password=True,
-                            id="input-ssh-password",
-                            classes="form-input",
-                        )
-                    with Vertical(classes="form-field-last"):
-                        yield Label("Save:", classes="form-label")
-                        yield Switch(
-                            value=p.ssh_tunnel.store_password if p.ssh_tunnel else False,
-                            id="input-ssh-store-password",
-                        )
+                yield Label("SSH Password:", classes="form-label")
+                yield Input(
+                    value=p.ssh_tunnel.password if p.ssh_tunnel else "",
+                    placeholder="(leave empty to prompt or use key)",
+                    password=True,
+                    id="input-ssh-password",
+                    classes="form-input",
+                )
 
             with Horizontal(id="button-row"):
                 yield Button("Save", variant="primary", id="btn-save")
@@ -317,13 +327,17 @@ class ProfileFormScreen(ModalScreen[Profile | None]):
     @staticmethod
     def _has_advanced_values(profile: Profile) -> bool:
         """Check if the profile has any advanced fields set."""
-        if profile.store_password or profile.password:
+        if profile.password:
             return True
         if profile.connect_timeout != 10:
             return True
         if profile.compress:
             return True
         if profile.init_command:
+            return True
+        if profile.login_path:
+            return True
+        if profile.option_file or profile.option_group:
             return True
         return False
 
@@ -374,7 +388,6 @@ class ProfileFormScreen(ModalScreen[Profile | None]):
         database = self.query_one("#input-database", Input).value.strip()
 
         # Advanced
-        store_password = self.query_one("#input-store-password", Switch).value
         password = self.query_one("#input-password", Input).value.strip()
 
         timeout_str = self.query_one("#input-timeout", Input).value.strip()
@@ -385,6 +398,9 @@ class ProfileFormScreen(ModalScreen[Profile | None]):
 
         compress = self.query_one("#input-compress", Switch).value
         init_command = self.query_one("#input-init-command", Input).value.strip()
+        login_path = self.query_one("#input-login-path", Input).value.strip()
+        option_file = self.query_one("#input-option-file", Input).value.strip()
+        option_group = self.query_one("#input-option-group", Input).value.strip()
 
         # SSL
         ssl_mode_select = self.query_one("#input-ssl-mode", Select)
@@ -401,7 +417,6 @@ class ProfileFormScreen(ModalScreen[Profile | None]):
         ssh_username = self.query_one("#input-ssh-username", Input).value.strip()
         ssh_port_str = self.query_one("#input-ssh-port", Input).value.strip()
         ssh_key_file = self.query_one("#input-ssh-key", Input).value.strip()
-        ssh_store_password = self.query_one("#input-ssh-store-password", Switch).value
         ssh_password = self.query_one("#input-ssh-password", Input).value.strip()
         ssh_tunnel: SshTunnelConfig | None = None
         if ssh_host:
@@ -414,8 +429,7 @@ class ProfileFormScreen(ModalScreen[Profile | None]):
                 port=ssh_port,
                 username=ssh_username,
                 key_file=ssh_key_file,
-                store_password=ssh_store_password,
-                password=ssh_password if ssh_store_password else "",
+                password=ssh_password,
             )
 
         profile = Profile(
@@ -428,10 +442,12 @@ class ProfileFormScreen(ModalScreen[Profile | None]):
             connect_timeout=connect_timeout,
             compress=compress,
             init_command=init_command,
+            login_path=login_path,
+            option_file=option_file,
+            option_group=option_group,
             ssl=ssl,
             ssh_tunnel=ssh_tunnel,
-            store_password=store_password,
-            password=password if store_password else "",
+            password=password,
         )
 
         self.dismiss(profile)

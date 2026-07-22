@@ -60,12 +60,8 @@ def parse_args(argv: list[str] | None = None) -> CliOptions:
 
     # Connection options (matching mysql client)
     conn = parser.add_argument_group("connection options")
-    conn.add_argument(
-        "-h", "--host", metavar="HOST", help="Server hostname (default: 127.0.0.1)"
-    )
-    conn.add_argument(
-        "-P", "--port", type=int, metavar="PORT", help="Server port (default: 3306)"
-    )
+    conn.add_argument("-h", "--host", metavar="HOST", help="Server hostname (default: 127.0.0.1)")
+    conn.add_argument("-P", "--port", type=int, metavar="PORT", help="Server port (default: 3306)")
     conn.add_argument("-u", "--user", metavar="USER", help="MySQL username")
     conn.add_argument(
         "-p",
@@ -77,9 +73,7 @@ def parse_args(argv: list[str] | None = None) -> CliOptions:
         help="Password (prompted if flag given without value)",
     )
     conn.add_argument("-D", "--database", metavar="DB", help="Default database")
-    conn.add_argument(
-        "-C", "--compress", action="store_true", help="Enable protocol compression"
-    )
+    conn.add_argument("-C", "--compress", action="store_true", help="Enable protocol compression")
     conn.add_argument(
         "--connect-timeout",
         type=int,
@@ -89,9 +83,7 @@ def parse_args(argv: list[str] | None = None) -> CliOptions:
 
     # Config file options
     cfg = parser.add_argument_group("config file options")
-    cfg.add_argument(
-        "--login-path", metavar="NAME", help="Login path from .mylogin.cnf"
-    )
+    cfg.add_argument("--login-path", metavar="NAME", help="Login path from .mylogin.cnf")
     cfg.add_argument(
         "--defaults-file", metavar="FILE", help="Option file path (instead of ~/.my.cnf)"
     )
@@ -115,15 +107,9 @@ def parse_args(argv: list[str] | None = None) -> CliOptions:
 
     # mydba-specific options
     mydba = parser.add_argument_group("mydba options")
-    mydba.add_argument(
-        "--profile", metavar="NAME", help="Connect using a saved profile"
-    )
-    mydba.add_argument(
-        "--init-command", metavar="SQL", help="SQL to execute after connecting"
-    )
-    mydba.add_argument(
-        "-V", "--version", action="version", version=f"mydba {__version__}"
-    )
+    mydba.add_argument("--profile", metavar="NAME", help="Connect using a saved profile")
+    mydba.add_argument("--init-command", metavar="SQL", help="SQL to execute after connecting")
+    mydba.add_argument("-V", "--version", action="version", version=f"mydba {__version__}")
 
     args = parser.parse_args(argv)
 
@@ -136,15 +122,17 @@ def parse_args(argv: list[str] | None = None) -> CliOptions:
         return options
 
     # Direct connection mode — build a Profile from CLI flags
-    has_connection_args = any([
-        args.host,
-        args.port,
-        args.user,
-        args.password is not None,
-        args.database,
-        args.login_path,
-        args.defaults_file,
-    ])
+    has_connection_args = any(
+        [
+            args.host,
+            args.port,
+            args.user,
+            args.password is not None,
+            args.database,
+            args.login_path,
+            args.defaults_file,
+        ]
+    )
 
     if has_connection_args:
         ssl = _build_ssl_config(args)

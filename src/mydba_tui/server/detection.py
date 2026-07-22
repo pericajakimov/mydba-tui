@@ -33,6 +33,7 @@ class ServerInfo:
         aurora_server_id: Aurora instance ID (empty if not Aurora).
         innodb_version: InnoDB version (useful for Aurora v3 engine context).
         wsrep_cluster_name: PXC/Galera cluster name (empty if not PXC).
+        wsrep_node_name: PXC node name (empty if not PXC).
     """
 
     vendor: str = ""
@@ -48,6 +49,7 @@ class ServerInfo:
     aurora_server_id: str = ""
     innodb_version: str = ""
     wsrep_cluster_name: str = ""
+    wsrep_node_name: str = ""
 
 
 def detect(connection: MySQLConnectionAbstract | PooledMySQLConnection) -> ServerInfo:
@@ -164,6 +166,8 @@ def _detect_pxc(
 ) -> None:
     """Detect if the server is Percona XtraDB Cluster."""
     info.wsrep_cluster_name = _query_variable(connection, "wsrep_cluster_name", "server.detection")
+    if info.wsrep_cluster_name:
+        info.wsrep_node_name = _query_variable(connection, "wsrep_node_name", "server.detection")
 
 
 def _detect_role(

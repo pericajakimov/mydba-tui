@@ -43,6 +43,7 @@ class ProfilesScreen(Screen[None]):
         Binding("a", "add_profile", "Add"),
         Binding("e", "edit_profile", "Edit"),
         Binding("d", "delete_profile", "Delete"),
+        Binding("c", "copy_profile", "Copy"),
         Binding("escape", "go_back", "Back"),
         Binding("f10", "quit", "Exit"),
     ]
@@ -164,6 +165,40 @@ class ProfilesScreen(Screen[None]):
 
         self.app.push_screen(ProfileFormScreen(profile), callback=on_result)
 
+    def action_copy_profile(self) -> None:
+        """Duplicate the selected profile with a new name."""
+        import copy
+
+        name = self._get_selected_profile_name()
+        if name is None:
+            return
+
+        profiles = load_profiles()
+        profile = next((p for p in profiles if p.name == name), None)
+        if profile is None:
+            return
+
+        # Create a copy with " (copy)" suffix
+        new_profile = copy.deepcopy(profile)
+        new_name = f"{profile.name} (copy)"
+        # Ensure uniqueness
+        existing_names = {p.name for p in profiles}
+        counter = 1
+        while new_name in existing_names:
+            counter += 1
+            new_name = f"{profile.name} (copy {counter})"
+        new_profile.name = new_name
+
+        # Open edit form so user can rename/modify
+        def on_result(updated: Profile | None) -> None:
+            if updated is not None:
+                current_profiles = load_profiles()
+                current_profiles.append(updated)
+                save_profiles(current_profiles)
+                self._refresh_list()
+
+        self.app.push_screen(ProfileFormScreen(new_profile), callback=on_result)
+
     def action_delete_profile(self) -> None:
         """Delete the selected profile after confirmation."""
         name = self._get_selected_profile_name()
@@ -281,20 +316,29 @@ class ProfilesScreen(Screen[None]):
         from mydba_tui.connection import connect
 
         try:
-            connection = connect(profile, password)
+            result = connect(profile, password)
         except MySQLError as e:
             # Schedule UI update on the main thread
             self.app.call_from_thread(self._on_connect_failure, profile, e)
             return
 
-        self.app.call_from_thread(self._on_connect_success, profile, connection)
+        self.app.call_from_thread(self._on_connect_success, profile, result)
 
-    def _on_connect_success(self, profile: Profile, connection: object) -> None:
+    def _on_connect_success(self, profile: Profile, result: object) -> None:
         """Handle successful connection (called on main thread)."""
+        from mydba_tui.connection import ConnectionResult
         from mydba_tui.server import detect
 
-        server_info = detect(connection)  # type: ignore[arg-type]
-        self.app.db_connection = connection  # type: ignore[attr-defined]
+        conn_result = (
+            ConnectionResult(
+                connection=result.connection,  # type: ignore[attr-defined]
+                tunnel=result.tunnel,  # type: ignore[attr-defined]
+            )
+            if not isinstance(result, ConnectionResult)
+            else result
+        )
+        server_info = detect(conn_result.connection)
+        self.app.db_connection = conn_result  # type: ignore[attr-defined]
         self.app.active_profile = profile  # type: ignore[attr-defined]
         self.app.server_info = server_info  # type: ignore[attr-defined]
 
@@ -303,12 +347,17 @@ class ProfilesScreen(Screen[None]):
         env_color = ENVIRONMENT_COLORS.get(profile.environment, "white")
         vendor_display = _format_vendor(server_info)
         role_display = f" | {server_info.role.capitalize()}" if server_info.role else ""
+        instance_display = ""
+        if server_info.aurora_server_id:
+            instance_display = f" | {server_info.aurora_server_id}"
+        elif server_info.wsrep_node_name:
+            instance_display = f" | {server_info.wsrep_node_name}"
         db_display = f" | {server_info.current_database}" if server_info.current_database else ""
         user_display = f" | {server_info.current_user}" if server_info.current_user else ""
 
         status = (
             f"[bold {env_color}]{env_label}[/bold {env_color}] {profile.name}"
-            f" | {vendor_display}{role_display}{db_display}{user_display}"
+            f" | {vendor_display}{role_display}{instance_display}{db_display}{user_display}"
         )
 
         self.app.connection_status = status  # type: ignore[attr-defined]

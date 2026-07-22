@@ -6,7 +6,10 @@ using Profile settings. Handles SSL modes, compression, timeouts,
 login paths, option files, and init commands.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any
 
 import mysql.connector
 from mysql.connector.abstracts import MySQLConnectionAbstract
@@ -16,10 +19,45 @@ from mysql.connector.pooling import PooledMySQLConnection
 from mydba_tui.models.profile import Profile
 
 
-def connect(
-    profile: Profile, password: str = ""
-) -> MySQLConnectionAbstract | PooledMySQLConnection:
+class ConnectionResult:
+    """Holds the MySQL connection and optional SSH tunnel.
+
+    The tunnel must be kept alive for the duration of the connection.
+    Call close() to cleanly shut down both.
+    """
+
+    def __init__(
+        self,
+        connection: MySQLConnectionAbstract | PooledMySQLConnection,
+        tunnel: Any = None,
+    ) -> None:
+        """Initialize connection result.
+
+        Args:
+            connection: The MySQL connection.
+            tunnel: The SSH tunnel forwarder (if used).
+        """
+        self.connection = connection
+        self.tunnel = tunnel
+
+    def close(self) -> None:
+        """Close the connection and stop the tunnel."""
+        try:
+            self.connection.close()
+        except Exception:
+            pass
+        if self.tunnel is not None:
+            try:
+                self.tunnel.stop()
+            except Exception:
+                pass
+
+
+def connect(profile: Profile, password: str = "") -> ConnectionResult:
     """Establish a MySQL connection using profile settings.
+
+    If the profile has SSH tunnel configuration, establishes the tunnel
+    first and connects through it.
 
     The password parameter is used when the profile has no stored password
     and the user enters it at the prompt.
@@ -30,13 +68,30 @@ def connect(
             only if profile.password is empty).
 
     Returns:
-        An established MySQL connection.
+        ConnectionResult containing the connection and optional tunnel.
 
     Raises:
         mysql.connector.errors.Error: If the connection fails.
+        Exception: If the SSH tunnel fails to establish.
     """
-    kwargs = _build_connect_kwargs(profile, password)
-    connection = mysql.connector.connect(**kwargs)
+    from mydba_tui.connection.tunnel import create_tunnel
+
+    tunnel = create_tunnel(profile)
+    tunnel_local_port: int | None = None
+
+    if tunnel is not None:
+        tunnel.start()
+        tunnel_local_port = tunnel.local_port
+
+    kwargs = _build_connect_kwargs(profile, password, tunnel_local_port)
+
+    try:
+        connection = mysql.connector.connect(**kwargs)
+    except Exception:
+        # If connection fails, stop the tunnel
+        if tunnel is not None:
+            tunnel.stop()
+        raise
 
     # Execute init command if configured
     if profile.init_command:
@@ -44,10 +99,12 @@ def connect(
         cursor.execute(profile.init_command)
         cursor.close()
 
-    return connection
+    return ConnectionResult(connection, tunnel)
 
 
-def _build_connect_kwargs(profile: Profile, runtime_password: str) -> dict[str, object]:
+def _build_connect_kwargs(
+    profile: Profile, runtime_password: str, tunnel_local_port: int | None = None
+) -> dict[str, object]:
     """Build the keyword arguments for mysql.connector.connect().
 
     Priority:
@@ -58,6 +115,7 @@ def _build_connect_kwargs(profile: Profile, runtime_password: str) -> dict[str, 
     Args:
         profile: Connection profile.
         runtime_password: Password entered at the prompt.
+        tunnel_local_port: Local port from SSH tunnel (overrides host/port).
 
     Returns:
         Dictionary of connection keyword arguments.
@@ -88,9 +146,16 @@ def _build_connect_kwargs(profile: Profile, runtime_password: str) -> dict[str, 
         kwargs["option_groups"] = [profile.login_path]
 
     # Explicit connection parameters (override config file values)
-    kwargs["host"] = profile.host
-    kwargs["port"] = profile.port
-    kwargs["connection_timeout"] = profile.connect_timeout
+    if tunnel_local_port is not None:
+        # Tunnel active — connect to local forwarded port
+        kwargs["host"] = "127.0.0.1"
+        kwargs["port"] = tunnel_local_port
+        # Use longer timeout for tunneled connections
+        kwargs["connection_timeout"] = max(profile.connect_timeout, 30)
+    else:
+        kwargs["host"] = profile.host
+        kwargs["port"] = profile.port
+        kwargs["connection_timeout"] = profile.connect_timeout
     kwargs["autocommit"] = True
 
     if profile.username:

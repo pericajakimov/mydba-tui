@@ -133,6 +133,14 @@ Examples of information intentionally omitted:
 
 The list should remain simple and easy to scan.
 
+Available actions on the profile list:
+
+- **Enter** — Connect to the selected profile
+- **a** — Add a new profile
+- **e** — Edit the selected profile
+- **c** — Copy (duplicate) the selected profile
+- **d** — Delete the selected profile (with confirmation)
+
 ---
 
 # Startup Flow
@@ -207,6 +215,34 @@ Supported SSL modes (matching MySQL `--ssl-mode`):
 Authentication failures are reported exactly as returned by MySQL.
 
 No custom interpretation is performed.
+
+---
+
+# SSH Tunnel
+
+Profiles may define an SSH tunnel (jump host) configuration for connecting
+to MySQL servers not directly reachable from the local machine.
+
+When a tunnel is configured:
+
+1. An SSH connection is established to the jump host.
+2. A local port is forwarded through the tunnel to the remote MySQL server.
+3. The MySQL connection is made to `127.0.0.1` on the forwarded port.
+4. The tunnel remains active for the entire session.
+
+SSH tunnel fields:
+
+- Host — SSH jump server hostname or IP
+- Port — SSH port (default: 22)
+- Username — SSH username
+- Key File — path to SSH private key (optional)
+- Password — SSH password (optional, obfuscated if stored)
+
+Authentication priority:
+
+1. Key file (if provided and exists)
+2. Password
+3. SSH agent (if available)
 
 ---
 
@@ -395,19 +431,70 @@ additional configuration in mydba.
 
 # Command-Line Compatibility
 
-The application should support standard MySQL connection options whenever practical.
+The application supports standard MySQL client connection options.
 
-Examples include:
+When connection parameters are provided on the command line, the profile
+selection screen is skipped and a direct connection is established.
 
+## Connection Options
+
+| Flag | Long form | Description |
+|------|-----------|-------------|
+| `-h` | `--host` | Server hostname (default: 127.0.0.1) |
+| `-P` | `--port` | Server port (default: 3306) |
+| `-u` | `--user` | MySQL username |
+| `-p` | `--password` | Password (prompted if given without value) |
+| `-D` | `--database` | Default database |
+| `-C` | `--compress` | Enable protocol compression |
+| | `--connect-timeout` | Connection timeout in seconds |
+
+## Config File Options
+
+| Flag | Long form | Description |
+|------|-----------|-------------|
+| | `--login-path` | Login path from .mylogin.cnf |
+| | `--defaults-file` | Option file path (instead of ~/.my.cnf) |
+| | `--defaults-group-suffix` | Option group suffix (e.g. _payments) |
+
+## SSL Options
+
+| Flag | Long form | Description |
+|------|-----------|-------------|
+| | `--ssl-mode` | DISABLED, PREFERRED, REQUIRED, VERIFY_CA, VERIFY_IDENTITY |
+| | `--ssl-ca` | CA certificate path |
+| | `--ssl-cert` | Client certificate path |
+| | `--ssl-key` | Client key path |
+
+## mydba-Specific Options
+
+| Flag | Long form | Description |
+|------|-----------|-------------|
+| | `--profile` | Connect using a saved profile by name |
+| | `--init-command` | SQL to execute after connecting |
+| `-V` | `--version` | Show version and exit |
+| | `--help` | Show help and exit |
+
+## Examples
+
+```bash
+# Interactive mode (profile selection)
+mydba
+
+# Connect to local server
+mydba -h 127.0.0.1 -u root -p
+
+# Connect with inline password
+mydba -h db.example.com -u admin -pMySecret -D payments
+
+# Use a saved profile
+mydba --profile Payments_prod
+
+# Use login path from .mylogin.cnf
+mydba --login-path production
+
+# Show version
+mydba --version
 ```
--h
--P
--u
--p
--D
-```
-
-This compatibility exists primarily for familiarity and convenience.
 
 Interactive profile selection remains the primary workflow.
 
@@ -431,14 +518,23 @@ Detected capabilities determine which features are available throughout the appl
 
 # Header Information
 
-After connecting, the application header displays:
+After connecting, the application status bar displays:
 
-- Environment
+- Environment (color-coded: PROD=red, STAGE=orange, QA=light blue, DEV=green)
 - Connection name
-- Server role
 - Server type and version
+- Server role (if applicable)
+- Instance identifier (Aurora: aurora_server_id, PXC: wsrep_node_name)
 - Current database
 - Current user
+
+Examples:
+
+```
+PROD Payments_writer | Aurora 3.04.3 (InnoDB 8.0.36) | Writer | prod-instance-1 | payments | dba@%
+DEV Local | MySQL 8.4.10 | mysql | root@localhost
+PROD PXC_node1 | PXC 8.0.35 | node1 | payments | dba@%
+```
 
 This information remains visible for the entire session.
 

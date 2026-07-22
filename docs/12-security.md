@@ -167,11 +167,19 @@ Profiles may optionally define SSH tunnel parameters.
 
 If configured:
 
-- Establish the tunnel.
-- Connect through it.
+- Establish the SSH tunnel to the jump host first.
+- Forward a local port to the remote MySQL server.
+- Connect MySQL through the forwarded port.
 - Report connection failures without modification.
 
+Supported SSH authentication:
+
+- Key-based authentication (RSA keys, SSH agent)
+- Password authentication (obfuscated in profiles.yaml)
+
 Tunnel configuration is stored only as connection metadata.
+The tunnel remains active for the duration of the connection
+and is closed automatically on disconnect.
 
 ---
 

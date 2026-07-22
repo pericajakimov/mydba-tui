@@ -44,6 +44,7 @@ dependencies = [
     "rich>=13.7.0",
     "mysql-connector-python>=9.0.0",
     "pyyaml>=6.0",
+    "paramiko>=3.0.0",
 ]
 
 
@@ -101,3 +102,7 @@ warn_unused_configs = true
 exclude = [
     "tests/"
 ]
+
+[[tool.mypy.overrides]]
+module = "paramiko"
+ignore_missing_imports = true

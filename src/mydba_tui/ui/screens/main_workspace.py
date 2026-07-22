@@ -116,6 +116,8 @@ class MainWorkspaceScreen(Screen[None]):
 
         if data.get("type") == "schema" and not data.get("loaded"):
             self._load_object_types(node)
+        elif data.get("type") == "category" and not data.get("loaded"):
+            self._load_objects(node)
 
     def _load_object_types(self, schema_node: TreeNode[object]) -> None:
         """Load object type categories for a schema node."""
@@ -140,31 +142,61 @@ class MainWorkspaceScreen(Screen[None]):
         # Mark as loaded so we don't re-query
         data["loaded"] = True
 
-        # Add object type categories
-        schema_node.add_leaf(
-            f"Tables ({counts.tables})",
-            data={"type": "category", "category": "tables", "schema": schema_name},
-        )
-        schema_node.add_leaf(
-            f"Views ({counts.views})",
-            data={"type": "category", "category": "views", "schema": schema_name},
-        )
-        schema_node.add_leaf(
-            f"Procedures ({counts.procedures})",
-            data={"type": "category", "category": "procedures", "schema": schema_name},
-        )
-        schema_node.add_leaf(
-            f"Functions ({counts.functions})",
-            data={"type": "category", "category": "functions", "schema": schema_name},
-        )
-        schema_node.add_leaf(
-            f"Events ({counts.events})",
-            data={"type": "category", "category": "events", "schema": schema_name},
-        )
-        schema_node.add_leaf(
-            f"Triggers ({counts.triggers})",
-            data={"type": "category", "category": "triggers", "schema": schema_name},
-        )
+        # Add object type categories (expandable to list objects)
+        categories = [
+            ("Tables", counts.tables, "tables"),
+            ("Views", counts.views, "views"),
+            ("Procedures", counts.procedures, "procedures"),
+            ("Functions", counts.functions, "functions"),
+            ("Events", counts.events, "events"),
+            ("Triggers", counts.triggers, "triggers"),
+        ]
+        for label, count, category in categories:
+            cat_node = schema_node.add(
+                f"{label} ({count})",
+                data={
+                    "type": "category",
+                    "category": category,
+                    "schema": schema_name,
+                    "loaded": False,
+                },
+            )
+            cat_node.allow_expand = True
+
+    def _load_objects(self, category_node: TreeNode[object]) -> None:
+        """Load individual objects for a category node."""
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.services.browser import get_objects
+
+        data = category_node.data
+        if not isinstance(data, dict):
+            return
+
+        schema = data["schema"]
+        category = data["category"]
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return
+
+        try:
+            objects = get_objects(conn_result.connection, schema, category)
+        except Exception:
+            self.notify(f"Failed to load {category}.", severity="error")
+            return
+
+        data["loaded"] = True
+
+        for obj_name in objects:
+            category_node.add_leaf(
+                obj_name,
+                data={
+                    "type": "object",
+                    "category": category,
+                    "schema": schema,
+                    "name": obj_name,
+                },
+            )
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[object]) -> None:
         """Handle selection of a tree node."""
@@ -182,8 +214,15 @@ class MainWorkspaceScreen(Screen[None]):
             schema = data["schema"]
             category = data["category"]
             content.update(
-                f"[b]{schema}[/b] — {category.capitalize()}\n\n"
-                f"[dim]Object listing will be added in the next step.[/dim]"
+                f"[b]{schema}[/b] — {category.capitalize()}\n\n[dim]Expand to list objects.[/dim]"
+            )
+        elif data.get("type") == "object":
+            schema = data["schema"]
+            category = data["category"]
+            name = data["name"]
+            content.update(
+                f"[b]{schema}.{name}[/b] ({category[:-1]})\n\n"
+                f"[dim]Metadata view will be added in the next step.[/dim]"
             )
 
     def action_open_profiles(self) -> None:

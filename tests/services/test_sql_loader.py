@@ -20,6 +20,34 @@ def test_load_object_counts_sql() -> None:
     assert "{schema}" in sql
 
 
+def test_load_tables_sql() -> None:
+    """Should load the tables listing SQL file."""
+    sql = load_sql("browser/tables.sql")
+    assert "table_name" in sql
+    assert "BASE TABLE" in sql
+    assert "{schema}" in sql
+
+
+def test_load_views_sql() -> None:
+    """Should load the views listing SQL file."""
+    sql = load_sql("browser/views.sql")
+    assert "table_name" in sql
+    assert "VIEW" in sql
+
+
+def test_load_procedures_sql() -> None:
+    """Should load the procedures listing SQL file."""
+    sql = load_sql("browser/procedures.sql")
+    assert "routine_name" in sql
+    assert "PROCEDURE" in sql
+
+
+def test_load_triggers_sql() -> None:
+    """Should load the triggers listing SQL file."""
+    sql = load_sql("browser/triggers.sql")
+    assert "trigger_name" in sql
+
+
 def test_load_nonexistent_file() -> None:
     """Should raise FileNotFoundError for missing SQL files."""
     with pytest.raises(FileNotFoundError):

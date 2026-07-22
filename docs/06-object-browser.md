@@ -100,6 +100,7 @@ No table data is loaded automatically.
 
 Object counts are displayed next to each category name. Schema contents
 are loaded lazily — only when a schema node is expanded for the first time.
+Individual objects within a category are also loaded lazily on expansion.
 
 ---
 

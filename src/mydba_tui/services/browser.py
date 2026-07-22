@@ -92,3 +92,45 @@ def get_object_counts(
         events=int(row[4] or 0),  # type: ignore[arg-type,index]
         triggers=int(row[5] or 0),  # type: ignore[arg-type,index]
     )
+
+
+# Mapping of category names to their SQL files
+_CATEGORY_SQL_FILES = {
+    "tables": "browser/tables.sql",
+    "views": "browser/views.sql",
+    "procedures": "browser/procedures.sql",
+    "functions": "browser/functions.sql",
+    "events": "browser/events.sql",
+    "triggers": "browser/triggers.sql",
+}
+
+
+def get_objects(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    category: str,
+) -> list[str]:
+    """Get the list of objects for a category within a schema.
+
+    Args:
+        connection: Active MySQL connection.
+        schema: Schema name.
+        category: Object category (tables, views, procedures, functions, events, triggers).
+
+    Returns:
+        Sorted list of object names.
+    """
+    sql_file = _CATEGORY_SQL_FILES.get(category)
+    if sql_file is None:
+        return []
+
+    sql_template = load_sql(sql_file)
+    sql = sql_template.replace("{schema}", schema)
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    rows = cursor.fetchall()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, f"browser.{category}")
+    return [str(row[0]) for row in rows]  # type: ignore[index]

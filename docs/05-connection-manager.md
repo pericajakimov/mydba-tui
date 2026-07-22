@@ -365,6 +365,17 @@ Example profile:
 
 This reads `[client]` and `[client_reporting]` groups from the specified file.
 
+The connector reads all supported options from the config file, including:
+
+- `user`, `password`
+- `host`, `port`
+- `compress`
+- `connect-timeout`
+- `ssl-mode`, `ssl-ca`, `ssl-cert`, `ssl-key`
+- `database`
+
+Explicit profile fields always override config file values.
+
 ## Priority
 
 When both profile fields and config file values are available:

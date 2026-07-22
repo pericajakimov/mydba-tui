@@ -6,7 +6,6 @@ to prompt the user.
 """
 
 from pathlib import Path
-from unittest.mock import patch
 
 from mydba_tui.connection.mycnf import MyCnfCredentials, read_mycnf_credentials
 from mydba_tui.models.profile import Profile

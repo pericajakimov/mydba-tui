@@ -77,12 +77,12 @@ The Browser follows a hierarchical tree structure.
 Schemas
 
     sales
-        Tables
-        Views
-        Procedures
-        Functions
-        Events
-        Triggers
+        Tables (42)
+        Views (3)
+        Procedures (7)
+        Functions (2)
+        Events (1)
+        Triggers (5)
 
     reporting
         ...
@@ -97,6 +97,9 @@ Schemas
 Selecting an object opens its metadata view.
 
 No table data is loaded automatically.
+
+Object counts are displayed next to each category name. Schema contents
+are loaded lazily — only when a schema node is expanded for the first time.
 
 ---
 

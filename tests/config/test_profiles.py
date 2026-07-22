@@ -11,7 +11,7 @@ from mydba_tui.config.profiles import (
     save_profiles,
     update_profile,
 )
-from mydba_tui.models.profile import Profile, SslConfig, SshTunnelConfig
+from mydba_tui.models.profile import Profile, SshTunnelConfig, SslConfig
 
 
 def test_load_profiles_creates_file_on_first_run(tmp_path: Path) -> None:

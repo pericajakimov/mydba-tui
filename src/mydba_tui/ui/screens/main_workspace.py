@@ -11,6 +11,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static, Tree
+from textual.widgets.tree import TreeNode
 
 from mydba_tui.ui.widgets import StatusBar
 
@@ -103,21 +104,86 @@ class MainWorkspaceScreen(Screen[None]):
         tree.root.expand()
 
         for schema in schemas:
-            tree.root.add_leaf(schema, data={"type": "schema", "name": schema})
+            node = tree.root.add(schema, data={"type": "schema", "name": schema, "loaded": False})
+            node.allow_expand = True
+
+    def on_tree_node_expanded(self, event: Tree.NodeExpanded[object]) -> None:
+        """Handle expansion of a tree node — lazy load children."""
+        node = event.node
+        data = node.data
+        if not isinstance(data, dict):
+            return
+
+        if data.get("type") == "schema" and not data.get("loaded"):
+            self._load_object_types(node)
+
+    def _load_object_types(self, schema_node: TreeNode[object]) -> None:
+        """Load object type categories for a schema node."""
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.services.browser import get_object_counts
+
+        data = schema_node.data
+        if not isinstance(data, dict):
+            return
+
+        schema_name = data["name"]
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return
+
+        try:
+            counts = get_object_counts(conn_result.connection, schema_name)
+        except Exception:
+            self.notify(f"Failed to load objects for {schema_name}.", severity="error")
+            return
+
+        # Mark as loaded so we don't re-query
+        data["loaded"] = True
+
+        # Add object type categories
+        schema_node.add_leaf(
+            f"Tables ({counts.tables})",
+            data={"type": "category", "category": "tables", "schema": schema_name},
+        )
+        schema_node.add_leaf(
+            f"Views ({counts.views})",
+            data={"type": "category", "category": "views", "schema": schema_name},
+        )
+        schema_node.add_leaf(
+            f"Procedures ({counts.procedures})",
+            data={"type": "category", "category": "procedures", "schema": schema_name},
+        )
+        schema_node.add_leaf(
+            f"Functions ({counts.functions})",
+            data={"type": "category", "category": "functions", "schema": schema_name},
+        )
+        schema_node.add_leaf(
+            f"Events ({counts.events})",
+            data={"type": "category", "category": "events", "schema": schema_name},
+        )
+        schema_node.add_leaf(
+            f"Triggers ({counts.triggers})",
+            data={"type": "category", "category": "triggers", "schema": schema_name},
+        )
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[object]) -> None:
         """Handle selection of a tree node."""
         node = event.node
         data = node.data
-        if data is None:
+        if not isinstance(data, dict):
             return
 
-        if isinstance(data, dict) and data.get("type") == "schema":
+        content = self.query_one("#content-placeholder", Static)
+
+        if data.get("type") == "schema":
             schema_name = data["name"]
-            content = self.query_one("#content-placeholder", Static)
+            content.update(f"[b]{schema_name}[/b]\n\n[dim]Expand to browse objects.[/dim]")
+        elif data.get("type") == "category":
+            schema = data["schema"]
+            category = data["category"]
             content.update(
-                f"[b]{schema_name}[/b]\n\n"
-                f"[dim]Schema selected. Object types will be added in the next step.[/dim]"
+                f"[b]{schema}[/b] — {category.capitalize()}\n\n"
+                f"[dim]Object listing will be added in the next step.[/dim]"
             )
 
     def action_open_profiles(self) -> None:

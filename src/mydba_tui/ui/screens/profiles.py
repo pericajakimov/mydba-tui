@@ -14,6 +14,7 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 from mydba_tui.config.profiles import load_profiles, remove_profile, save_profiles
 from mydba_tui.models.profile import Profile
 from mydba_tui.ui.screens.profile_form import ProfileFormScreen
+from mydba_tui.ui.widgets import ConfirmDialog
 
 # Environment colors as documented in 05-connection-manager.md
 ENVIRONMENT_COLORS = {
@@ -142,16 +143,23 @@ class ProfilesScreen(Screen[None]):
         self.app.push_screen(ProfileFormScreen(profile), callback=on_result)
 
     def action_delete_profile(self) -> None:
-        """Delete the selected profile."""
+        """Delete the selected profile after confirmation."""
         name = self._get_selected_profile_name()
         if name is None:
             return
 
-        try:
-            remove_profile(name)
-        except ValueError:
-            pass
-        self._refresh_list()
+        def on_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                try:
+                    remove_profile(name)
+                except ValueError:
+                    pass
+                self._refresh_list()
+
+        self.app.push_screen(
+            ConfirmDialog(f"Delete profile '{name}'?"),
+            callback=on_confirm,
+        )
 
     def action_select_profile(self) -> None:
         """Select a profile for connection (placeholder)."""

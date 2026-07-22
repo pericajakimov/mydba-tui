@@ -243,8 +243,12 @@ Dialogs are modal.
 While a dialog is open:
 
 - Only the dialog receives keyboard input.
-- Esc closes the dialog unless confirmation is required.
-- Enter confirms the selected action.
+- Esc closes the dialog without performing the action.
+- Enter activates the focused button.
+
+For destructive actions (delete, disconnect), the safe option (No/Cancel)
+is focused by default. The user must Tab to the destructive option and
+press Enter to confirm.
 
 ---
 

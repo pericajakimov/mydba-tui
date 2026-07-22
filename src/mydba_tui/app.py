@@ -22,12 +22,12 @@ from mydba_tui.logging import setup_app_logging
 from mydba_tui.ui.screens import (
     AdministrationScreen,
     BrowserScreen,
-    HomeScreen,
     MonitoringScreen,
     ProfilesScreen,
     SettingsScreen,
     WorkspaceScreen,
 )
+from mydba_tui.ui.screens.main_workspace import MainWorkspaceScreen
 
 if TYPE_CHECKING:
     from mydba_tui.cli import CliOptions
@@ -111,12 +111,15 @@ class MyDBAApp(App[None]):
         self._setup_logging()
 
     def on_mount(self) -> None:
-        """Push the home screen on mount."""
-        self.push_screen(HomeScreen())
+        """Push the main workspace and open profiles if not connected."""
+        self.push_screen(MainWorkspaceScreen())
 
         # If CLI provided connection params, connect directly
         if self.cli_options.connect_directly:
             self._cli_connect()
+        else:
+            # No connection yet — open profiles modal
+            self.push_screen("profiles")
 
     def watch_theme(self, theme: str) -> None:
         """Persist theme selection when the user changes it."""
@@ -202,7 +205,6 @@ class MyDBAApp(App[None]):
         """Perform the actual connection from CLI mode."""
         from mydba_tui.connection import connect
         from mydba_tui.server import detect
-        from mydba_tui.ui.widgets import StatusBar
 
         try:
             result = connect(profile, password)
@@ -237,12 +239,8 @@ class MyDBAApp(App[None]):
         )
         self.connection_status = status
 
-        # Update status bar on home screen
-        try:
-            status_bar = self.query_one("#status-bar", StatusBar)
-            status_bar.status_text = status
-        except Exception:
-            pass
+        # Switch to main workspace
+        self.pop_screen()  # Pop profiles if it's on top
 
 
 def main() -> None:

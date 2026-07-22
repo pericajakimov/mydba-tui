@@ -14,7 +14,7 @@ class MonitoringScreen(Screen[None]):
     """Monitoring — lightweight live server monitoring."""
 
     BINDINGS = [
-        Binding("escape", "app.pop_screen", "Back"),
+        Binding("escape", "app.pop_screen", "Back", key_display="Esc"),
     ]
 
     def compose(self) -> ComposeResult:

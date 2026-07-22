@@ -64,6 +64,39 @@ class TestCollapseSql:
         )
         assert collapse_sql(sql) == expected
 
+    def test_strips_line_comments(self) -> None:
+        """SQL comments (-- style) should be removed."""
+        sql = "-- Load schemas\nSELECT schema_name\n-- Filter\nFROM schemata"
+        assert collapse_sql(sql) == "SELECT schema_name FROM schemata"
+
+    def test_strips_hash_comments(self) -> None:
+        """SQL comments (# style) should be removed."""
+        sql = "# Load schemas\nSELECT schema_name\n# Filter\nFROM schemata"
+        assert collapse_sql(sql) == "SELECT schema_name FROM schemata"
+
+    def test_strips_block_comments(self) -> None:
+        """SQL block comments (/* */ style) should be removed."""
+        sql = "/* Load schemas */\nSELECT schema_name /* inline */ FROM schemata"
+        assert collapse_sql(sql) == "SELECT schema_name FROM schemata"
+
+    def test_strips_multiline_block_comments(self) -> None:
+        """Multi-line block comments should be removed."""
+        sql = "/*\n * Multi-line\n * comment\n */\nSELECT 1"
+        assert collapse_sql(sql) == "SELECT 1"
+
+    def test_strips_comments_from_sql_file(self) -> None:
+        """Comments at the start of .sql file content should be stripped."""
+        sql = """-- List all schemas on the server.
+SELECT
+    schema_name
+FROM
+    information_schema.schemata
+ORDER BY
+    schema_name"""
+        result = collapse_sql(sql)
+        assert result.startswith("SELECT")
+        assert "--" not in result
+
 
 class TestLogSql:
     """Tests for writing SQL log entries."""

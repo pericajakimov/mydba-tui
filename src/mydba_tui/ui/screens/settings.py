@@ -14,7 +14,7 @@ class SettingsScreen(Screen[None]):
     """Settings — application configuration."""
 
     BINDINGS = [
-        Binding("escape", "app.pop_screen", "Back"),
+        Binding("escape", "app.pop_screen", "Back", key_display="Esc"),
     ]
 
     def compose(self) -> ComposeResult:

@@ -14,7 +14,7 @@ class BrowserScreen(Screen[None]):
     """Object Browser — browse database schemas and objects."""
 
     BINDINGS = [
-        Binding("escape", "app.pop_screen", "Back"),
+        Binding("escape", "app.pop_screen", "Back", key_display="Esc"),
     ]
 
     def compose(self) -> ComposeResult:

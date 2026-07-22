@@ -4,6 +4,7 @@ from mydba_tui.ui.screens import (
     AdministrationScreen,
     BrowserScreen,
     HomeScreen,
+    MainWorkspaceScreen,
     MonitoringScreen,
     SettingsScreen,
     WorkspaceScreen,
@@ -11,15 +12,20 @@ from mydba_tui.ui.screens import (
 
 
 def test_home_screen_has_bindings() -> None:
-    """Home screen should define F-key bindings for module navigation."""
+    """Home screen should have connection and exit bindings."""
     screen = HomeScreen()
     binding_keys = [b.key for b in screen.BINDINGS]
 
-    assert "f1" in binding_keys
-    assert "f2" in binding_keys
-    assert "f3" in binding_keys
-    assert "f4" in binding_keys
-    assert "f5" in binding_keys
+    assert "c" in binding_keys
+    assert "f10" in binding_keys
+
+
+def test_main_workspace_has_bindings() -> None:
+    """Main workspace should have connection and exit bindings."""
+    screen = MainWorkspaceScreen()
+    binding_keys = [b.key for b in screen.BINDINGS]
+
+    assert "c" in binding_keys
     assert "f10" in binding_keys
 
 
@@ -41,6 +47,7 @@ def test_module_screens_have_escape_binding() -> None:
 def test_all_screens_importable() -> None:
     """All screens should be importable from the screens package."""
     assert HomeScreen is not None
+    assert MainWorkspaceScreen is not None
     assert BrowserScreen is not None
     assert WorkspaceScreen is not None
     assert AdministrationScreen is not None

@@ -14,7 +14,7 @@ class WorkspaceScreen(Screen[None]):
     """SQL Workspace — interactive SQL editor and results viewer."""
 
     BINDINGS = [
-        Binding("escape", "app.pop_screen", "Back"),
+        Binding("escape", "app.pop_screen", "Back", key_display="Esc"),
     ]
 
     def compose(self) -> ComposeResult:

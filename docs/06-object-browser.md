@@ -40,6 +40,35 @@ Future object types may be added without changing the navigation model.
 
 ---
 
+# Layout
+
+The Object Browser uses a split-pane layout:
+
+```
++------------------------------------------------------------------+
+| Header                                                           |
++------------------------------------------------------------------+
+| Status Bar (connection info)                                     |
++------------------------------------------------------------------+
+|              |                                                    |
+| Browser Tree |          Content / Working Area                   |
+| (schemas,    |                                                    |
+|  objects)    |   (metadata, DDL, SQL results)                    |
+|              |                                                    |
+|              |                                                    |
++------------------------------------------------------------------+
+| Footer (key bindings)                                            |
++------------------------------------------------------------------+
+```
+
+The left panel contains the tree-style object browser (always visible).
+The right panel shows metadata for the selected object or SQL workspace.
+
+The browser panel remains visible while navigating between objects
+and while using the SQL workspace.
+
+---
+
 # Navigation
 
 The Browser follows a hierarchical tree structure.

@@ -8,6 +8,7 @@ to all available modules.
 from mydba_tui.ui.screens.administration import AdministrationScreen
 from mydba_tui.ui.screens.browser import BrowserScreen
 from mydba_tui.ui.screens.home import HomeScreen
+from mydba_tui.ui.screens.main_workspace import MainWorkspaceScreen
 from mydba_tui.ui.screens.monitoring import MonitoringScreen
 from mydba_tui.ui.screens.profiles import ProfilesScreen
 from mydba_tui.ui.screens.settings import SettingsScreen
@@ -17,6 +18,7 @@ __all__ = [
     "AdministrationScreen",
     "BrowserScreen",
     "HomeScreen",
+    "MainWorkspaceScreen",
     "MonitoringScreen",
     "ProfilesScreen",
     "SettingsScreen",

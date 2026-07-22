@@ -13,14 +13,14 @@ from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.screen import Screen
-from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
+from textual.screen import ModalScreen
+from textual.widgets import Label, ListItem, ListView, Static
 
 from mydba_tui.config.profiles import load_profiles, remove_profile, save_profiles
 from mydba_tui.models.profile import Profile
 from mydba_tui.ui.screens.password_prompt import Credentials, CredentialsPromptScreen
 from mydba_tui.ui.screens.profile_form import ProfileFormScreen
-from mydba_tui.ui.widgets import ConfirmDialog, StatusBar
+from mydba_tui.ui.widgets import ConfirmDialog
 
 if TYPE_CHECKING:
     from mysql.connector.errors import Error as MySQLError
@@ -36,7 +36,7 @@ ENVIRONMENT_COLORS = {
 }
 
 
-class ProfilesScreen(Screen[None]):
+class ProfilesScreen(ModalScreen[None]):
     """Connection profile list and management screen."""
 
     BINDINGS = [
@@ -49,39 +49,71 @@ class ProfilesScreen(Screen[None]):
     ]
 
     CSS = """
+    ProfilesScreen {
+        align: center middle;
+    }
+
     #profiles-container {
-        height: 1fr;
+        width: 50;
+        height: auto;
+        max-height: 80%;
         padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+
+    #profiles-title {
+        text-align: center;
+        text-style: bold;
+        padding-bottom: 1;
     }
 
     #profile-list {
-        height: 1fr;
+        height: auto;
+        max-height: 20;
+        overflow-y: auto;
+    }
+
+    #profiles-hint {
+        color: $text-muted;
+        padding-top: 1;
+    }
+
+    #profiles-status {
+        text-align: center;
+        height: 1;
     }
     """
 
     def compose(self) -> ComposeResult:
         """Build the profiles screen layout."""
-        yield Header()
-        yield StatusBar(id="status-bar")
         with Vertical(id="profiles-container"):
-            yield Static("[b]Connection Profiles[/b]\n", id="profiles-title")
+            yield Static("[b]Connection Profiles[/b]", id="profiles-title")
             yield ListView(id="profile-list")
-        yield Footer()
+            yield Static("", id="profiles-status")
+            yield Static(
+                "[dim]A[/dim]      Add         [dim]E[/dim]      Edit\n"
+                "[dim]C[/dim]      Copy        [dim]D[/dim]      Delete\n"
+                "[dim]Enter[/dim]  Connect     [dim]Esc[/dim]    Close",
+                id="profiles-hint",
+            )
 
     def on_mount(self) -> None:
         """Load and display profiles on mount."""
         self._refresh_list()
-        self._sync_status_bar()
+        # Clear any stale connecting message
+        try:
+            self.query_one("#profiles-status", Static).update("")
+        except Exception:
+            pass
 
     def on_screen_resume(self) -> None:
-        """Update status bar when screen becomes visible."""
-        self._sync_status_bar()
-
-    def _sync_status_bar(self) -> None:
-        """Sync status bar with current connection state."""
-        status = getattr(self.app, "connection_status", "")
-        if status:
-            self.query_one("#status-bar", StatusBar).status_text = status
+        """Refresh list when screen becomes visible."""
+        self._refresh_list()
+        try:
+            self.query_one("#profiles-status", Static).update("")
+        except Exception:
+            pass
 
     def _refresh_list(self) -> None:
         """Reload profiles from disk and update the list view."""
@@ -303,9 +335,19 @@ class ProfilesScreen(Screen[None]):
             profile.username = username
 
         # Show connecting status
-        self.query_one(
-            "#status-bar", StatusBar
-        ).status_text = f"[dim]Connecting to {profile.name}...[/dim]"
+        try:
+            status = self.query_one("#profiles-status", Static)
+            status.update(f"[yellow]Connecting to '{profile.name}' ...[/yellow]")
+        except Exception:
+            pass
+
+        try:
+            from mydba_tui.ui.widgets import StatusBar
+
+            status_bar = self.app.query_one("#status-bar", StatusBar)
+            status_bar.status_text = f"[dim]Connecting to '{profile.name}' ...[/dim]"
+        except Exception:
+            pass
         self._connect_worker(profile, password)
 
     @work(thread=True)
@@ -362,15 +404,25 @@ class ProfilesScreen(Screen[None]):
 
         self.app.connection_status = status  # type: ignore[attr-defined]
         self.notify(f"Connected to {profile.name}", severity="information")
+
+        # Pop profiles screen — workspace underneath will refresh
         self.app.pop_screen()
 
     def _on_connect_failure(self, profile: Profile, error: MySQLError) -> None:
         """Handle connection failure (called on main thread)."""
         # Reset status bar
         status = getattr(self.app, "connection_status", "")
-        self.query_one("#status-bar", StatusBar).status_text = (
-            status if status else "[dim]Not connected[/dim]"
-        )
+        try:
+            from mydba_tui.ui.widgets import StatusBar
+
+            status_bar = self.app.query_one("#status-bar", StatusBar)
+            status_bar.status_text = status if status else "[dim]Not connected[/dim]"
+        except Exception:
+            pass
+        try:
+            self.query_one("#profiles-status", Static).update("")
+        except Exception:
+            pass
 
         # Error codes 1044, 1045, 1698 are auth-related
         if error.errno in (1044, 1045, 1698):

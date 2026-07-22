@@ -21,6 +21,12 @@ SQL_LOG_FILENAME = "sql.log"
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 """Pattern matching consecutive whitespace characters."""
 
+_LINE_COMMENT_PATTERN = re.compile(r"--[^\n]*|#[^\n]*")
+"""Pattern matching SQL single-line comments (-- or # to end of line)."""
+
+_BLOCK_COMMENT_PATTERN = re.compile(r"/\*.*?\*/", re.DOTALL)
+"""Pattern matching SQL block comments (/* ... */)."""
+
 
 def get_sql_log_path() -> Path:
     """Return the path to the SQL log file.
@@ -34,17 +40,21 @@ def get_sql_log_path() -> Path:
 def collapse_sql(sql: str) -> str:
     """Collapse a multi-line SQL statement into a single line.
 
-    Replaces all newlines, tabs, and consecutive spaces with a single
-    space. This ensures every SQL log entry occupies exactly one line,
-    making the log grep-friendly and easy to parse.
+    Removes SQL comments (--, #, and /* */ styles), replaces all newlines,
+    tabs, and consecutive spaces with a single space. This ensures every
+    SQL log entry occupies exactly one line, making the log grep-friendly.
 
     Args:
-        sql: Raw SQL text, possibly multi-line.
+        sql: Raw SQL text, possibly multi-line with comments.
 
     Returns:
-        Single-line SQL string.
+        Single-line SQL string without comments.
     """
-    return _WHITESPACE_PATTERN.sub(" ", sql).strip()
+    # Remove block comments first (can span multiple lines)
+    cleaned = _BLOCK_COMMENT_PATTERN.sub("", sql)
+    # Remove single-line comments
+    cleaned = _LINE_COMMENT_PATTERN.sub("", cleaned)
+    return _WHITESPACE_PATTERN.sub(" ", cleaned).strip()
 
 
 def log_sql(sql: str, duration_seconds: float, source: str) -> None:

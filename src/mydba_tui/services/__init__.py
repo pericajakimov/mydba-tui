@@ -1,10 +1,7 @@
 """
 Services package.
 
-Contains application services implementing business logic and operations
-used by the TUI layer.
-
-Services should remain independent from presentation concerns and provide
-reusable functionality for database metadata, administration tasks, and
-automation workflows.
+Contains business logic services that bridge the UI layer with
+database operations. Services execute SQL, load metadata, and
+return structured results.
 """

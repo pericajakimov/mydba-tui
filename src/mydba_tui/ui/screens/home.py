@@ -10,6 +10,8 @@ from textual.binding import Binding
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+from mydba_tui.ui.widgets import StatusBar
+
 
 class HomeScreen(Screen[None]):
     """Home screen with module navigation menu."""
@@ -27,6 +29,7 @@ class HomeScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         """Build the home screen layout."""
         yield Header()
+        yield StatusBar(id="status-bar")
 
         yield Static(
             "[b]mydba[/b] — MySQL Database Administration Tool\n"
@@ -38,13 +41,17 @@ class HomeScreen(Screen[None]):
             "  [bold]F5[/bold]  Settings\n"
             "  [bold]c[/bold]   Connections\n"
             "\n"
-            "  [bold]F10[/bold] Exit\n"
-            "\n"
-            "  [dim]Not connected[/dim]",
+            "  [bold]F10[/bold] Exit",
             id="home-menu",
         )
 
         yield Footer()
+
+    def on_screen_resume(self) -> None:
+        """Update status bar when returning to this screen."""
+        status = getattr(self.app, "connection_status", "")
+        if status:
+            self.query_one("#status-bar", StatusBar).status_text = status
 
     def action_open_browser(self) -> None:
         """Navigate to the Object Browser."""

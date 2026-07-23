@@ -229,6 +229,19 @@ class IndexInfo:
     comment: str = ""
 
 
+@dataclass(slots=True)
+class IndexSizeInfo:
+    """Per-index size estimate from InnoDB internal statistics.
+
+    Attributes:
+        name: Index name.
+        size_bytes: Estimated index size in bytes.
+    """
+
+    name: str = ""
+    size_bytes: int = 0
+
+
 def get_table_info(
     connection: MySQLConnectionAbstract | PooledMySQLConnection,
     schema: str,
@@ -356,3 +369,44 @@ def get_table_indexes(
         )
         for row in rows
     ]
+
+
+def get_index_sizes(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    table: str,
+) -> dict[str, int]:
+    """Get per-index size estimates from InnoDB internal statistics.
+
+    Queries mysql.innodb_index_stats for the 'size' stat which reports
+    index size in pages. Multiplied by @@innodb_page_size to get bytes.
+
+    Returns an empty dict if the user lacks SELECT on mysql.innodb_index_stats
+    or the table uses a non-InnoDB engine.
+
+    Args:
+        connection: Active MySQL connection.
+        schema: Schema name.
+        table: Table name.
+
+    Returns:
+        Dict mapping index_name → size in bytes.
+    """
+    sql_template = load_sql("browser/index_sizes.sql")
+    sql = sql_template.replace("{schema}", schema).replace("{table}", table)
+    start = time.perf_counter()
+    try:
+        cursor = connection.cursor(buffered=True)
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+        cursor.close()
+        duration = time.perf_counter() - start
+        log_sql(sql, duration, "browser.index_sizes")
+    except Exception:
+        # Privilege denied or non-InnoDB table — degrade gracefully
+        return {}
+
+    return {
+        str(row[0] or ""): int(row[1] or 0)  # type: ignore[arg-type,index]
+        for row in rows
+    }

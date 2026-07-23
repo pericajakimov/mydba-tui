@@ -3,14 +3,18 @@ Main workspace screen.
 
 The primary interface after connecting to a database.
 Split-pane layout: object browser tree on the left,
-content/working area on the right.
+tabbed metadata/content area on the right.
 """
+
+from __future__ import annotations
+
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Static, Tree
+from textual.widgets import Footer, Header, Static, TabbedContent, TabPane, Tree
 from textual.widgets.tree import TreeNode
 
 from mydba_tui.ui.widgets import StatusBar
@@ -21,6 +25,7 @@ class MainWorkspaceScreen(Screen[None]):
 
     BINDINGS = [
         Binding("c", "open_profiles", "Connections", key_display="C"),
+        Binding("f6", "switch_focus", "Switch Panel", key_display="F6"),
         Binding("f10", "quit", "Exit", key_display="F10"),
     ]
 
@@ -43,14 +48,32 @@ class MainWorkspaceScreen(Screen[None]):
 
     #content-panel {
         width: 1fr;
-        padding: 1 2;
         overflow-y: auto;
     }
 
-    #content-placeholder {
-        color: $text-muted;
+    #metadata-tabs {
+        height: 1fr;
+    }
+
+    .tab-content {
+        padding: 1 2;
+        overflow-y: auto;
     }
     """
+
+    def __init__(self) -> None:
+        """Initialize the workspace."""
+        super().__init__()
+        self._selected_schema: str = ""
+        self._selected_object: str = ""
+        self._selected_category: str = ""
+        self._focus_on_tree: bool = True
+        # Cached metadata for the currently selected table
+        self._table_info: Any = None
+        self._table_columns: Any = None
+        self._table_indexes: Any = None
+        self._table_index_sizes: dict[str, int] = {}
+        self._table_ddl: str = ""
 
     def compose(self) -> ComposeResult:
         """Build the split-pane layout."""
@@ -63,7 +86,6 @@ class MainWorkspaceScreen(Screen[None]):
             with Vertical(id="content-panel"):
                 yield Static(
                     "[dim]Select an object from the browser to view its metadata.[/dim]",
-                    id="content-placeholder",
                 )
 
         yield Footer()
@@ -72,6 +94,7 @@ class MainWorkspaceScreen(Screen[None]):
         """Load schemas into the tree on mount."""
         self._sync_status_bar()
         self._load_schemas()
+        self.query_one("#browser-tree", Tree).focus()
 
     def on_screen_resume(self) -> None:
         """Update status bar and reload schemas when returning to this screen."""
@@ -139,10 +162,8 @@ class MainWorkspaceScreen(Screen[None]):
             self.notify(f"Failed to load objects for {schema_name}.", severity="error")
             return
 
-        # Mark as loaded so we don't re-query
         data["loaded"] = True
 
-        # Add object type categories (expandable to list objects)
         categories = [
             ("Tables", counts.tables, "tables"),
             ("Views", counts.views, "views"),
@@ -205,33 +226,45 @@ class MainWorkspaceScreen(Screen[None]):
         if not isinstance(data, dict):
             return
 
-        content = self.query_one("#content-placeholder", Static)
-
         if data.get("type") == "schema":
             schema_name = data["name"]
-            content.update(f"[b]{schema_name}[/b]\n\n[dim]Expand to browse objects.[/dim]")
+            self._show_placeholder(
+                f"[bold cyan]{schema_name}[/bold cyan]\n\n[dim]Expand to browse objects.[/dim]"
+            )
         elif data.get("type") == "category":
             schema = data["schema"]
             category = data["category"]
-            content.update(
-                f"[b]{schema}[/b] — {category.capitalize()}\n\n[dim]Expand to list objects.[/dim]"
+            self._show_placeholder(
+                f"[bold cyan]{schema}[/bold cyan] — {category.capitalize()}\n\n"
+                f"[dim]Expand to list objects.[/dim]"
             )
         elif data.get("type") == "object":
             schema = data["schema"]
             category = data["category"]
             name = data["name"]
+            self._selected_schema = schema
+            self._selected_object = name
+            self._selected_category = category
             if category == "tables":
-                self._show_table_metadata(schema, name)
+                self._show_table_tabs(schema, name)
             else:
-                content.update(
-                    f"[b]{schema}.{name}[/b] ({category[:-1]})\n\n"
+                self._show_placeholder(
+                    f"[bold cyan]{schema}.{name}[/bold cyan]"
+                    f" [dim]({category[:-1]})[/dim]\n\n"
                     f"[dim]Metadata view for {category} coming soon.[/dim]"
                 )
 
-    def _show_table_metadata(self, schema: str, table: str) -> None:
-        """Show table metadata in the content panel."""
+    def _show_placeholder(self, text: str) -> None:
+        """Show simple text in the content panel (no tabs)."""
+        content_panel = self.query_one("#content-panel", Vertical)
+        content_panel.remove_children()
+        content_panel.mount(Static(text))
+
+    def _show_table_tabs(self, schema: str, table: str) -> None:
+        """Load all table metadata and show tabbed view."""
         from mydba_tui.connection import ConnectionResult
         from mydba_tui.services.browser import (
+            get_index_sizes,
             get_table_columns,
             get_table_indexes,
             get_table_info,
@@ -241,31 +274,83 @@ class MainWorkspaceScreen(Screen[None]):
         if conn_result is None or not isinstance(conn_result, ConnectionResult):
             return
 
-        content = self.query_one("#content-placeholder", Static)
-
+        # Load all metadata at once
         try:
-            info = get_table_info(conn_result.connection, schema, table)
-            columns = get_table_columns(conn_result.connection, schema, table)
-            indexes = get_table_indexes(conn_result.connection, schema, table)
+            self._table_info = get_table_info(conn_result.connection, schema, table)
+            self._table_columns = get_table_columns(conn_result.connection, schema, table)
+            self._table_indexes = get_table_indexes(conn_result.connection, schema, table)
+            self._table_index_sizes = get_index_sizes(conn_result.connection, schema, table)
         except Exception as e:
-            content.update(f"[red]Error loading metadata: {e}[/red]")
+            self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
             return
-        # Calculate fragmentation
+
+        # Load DDL
+        import time
+
+        from mydba_tui.logging import log_sql
+
+        sql = f"SHOW CREATE TABLE `{schema}`.`{table}`"
+        start = time.perf_counter()
+        try:
+            cursor = conn_result.connection.cursor(buffered=True)
+            cursor.execute(sql)
+            row = cursor.fetchone()
+            cursor.close()
+            duration = time.perf_counter() - start
+            log_sql(sql, duration, "browser.ddl")
+            self._table_ddl = str(row[1]) if row and len(row) >= 2 else ""  # type: ignore[index]
+        except Exception:
+            self._table_ddl = ""
+
+        # Show tabs and render the first one
+        content_panel = self.query_one("#content-panel", Vertical)
+        content_panel.remove_children()
+        container = _TableMetadataTabs(schema, table)
+        content_panel.mount(container)
+
+        # Render the General tab immediately
+        self.call_after_refresh(self._render_general_tab)
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Render tab content from cached data."""
+        if not self._selected_schema or not self._selected_object:
+            return
+
+        pane_id = event.pane.id
+
+        if pane_id == "tab-general":
+            self._render_general_tab()
+        elif pane_id == "tab-columns":
+            self._render_columns_tab()
+        elif pane_id == "tab-indexes":
+            self._render_indexes_tab()
+        elif pane_id == "tab-ddl":
+            self._render_ddl_tab()
+
+    def _render_general_tab(self) -> None:
+        """Render general info from cached data."""
+        from mydba_tui.services.browser import TableInfo
+
+        info = self._table_info
+        if not isinstance(info, TableInfo):
+            return
+
+        schema = self._selected_schema
+        table = self._selected_object
+
         total_size = info.data_size + info.index_size
         frag_pct = f"{(info.data_free / total_size * 100):.1f}%" if total_size > 0 else "0%"
 
-        # Format general info — right-aligned labels
         lines: list[str] = []
         lines.append(f"[bold cyan]{schema}.{table}[/bold cyan] [dim](table)[/dim]\n")
-        lines.append("[bold yellow]General[/bold yellow]")
         lines.append(f"        [dim]Engine:[/dim] {info.engine}")
         lines.append(f"    [dim]Row Format:[/dim] {info.row_format}")
-        lines.append(f"  [dim]Rows (approx):[/dim] {info.row_count:,}")
+        lines.append(f"[dim] Rows (approx):[/dim] {info.row_count:,}")
         lines.append(f"[dim]Avg Row Length:[/dim] {info.avg_row_length:,} bytes")
-        lines.append(f"     [dim]Data Size:[/dim] {_format_bytes(info.data_size)}")
-        lines.append(f"    [dim]Index Size:[/dim] {_format_bytes(info.index_size)}")
-        lines.append(f"    [dim]Total Size:[/dim] {_format_bytes(total_size)}")
-        lines.append(f"    [dim]Free Space:[/dim] {_format_bytes(info.data_free)}")
+        lines.append(f"     [dim]Data Size:[/dim] {_format_bytes(info.data_size):>10}")
+        lines.append(f"    [dim]Index Size:[/dim] {_format_bytes(info.index_size):>10}")
+        lines.append(f"    [dim]Total Size:[/dim] {_format_bytes(total_size):>10}")
+        lines.append(f"    [dim]Free Space:[/dim] {_format_bytes(info.data_free):>10}")
         lines.append(f" [dim]Fragmentation:[/dim] {frag_pct}")
         lines.append(
             f"[dim]Auto Increment:[/dim] {info.auto_increment:,}"
@@ -273,95 +358,159 @@ class MainWorkspaceScreen(Screen[None]):
             else "[dim]Auto Increment:[/dim]"
         )
         lines.append(f"     [dim]Collation:[/dim] {info.collation}")
-        if info.create_options:
-            lines.append(f"       [dim]Options:[/dim] {info.create_options}")
+        lines.append(f"[dim]Create Options:[/dim] {info.create_options or ''}")
         lines.append(f"       [dim]Created:[/dim] {info.create_time}")
         lines.append(f"       [dim]Updated:[/dim] {info.update_time or ''}")
         lines.append(f"       [dim]Checked:[/dim] {info.check_time or ''}")
         lines.append(f"       [dim]Comment:[/dim] {info.comment or ''}")
 
-        # Format columns
-        lines.append("")
-        lines.append(f"[bold yellow]Columns ({len(columns)})[/bold yellow]")
-        if columns:
+        self._update_tab("tab-general", "\n".join(lines))
+
+    def _render_columns_tab(self) -> None:
+        """Render columns from cached data."""
+        columns = self._table_columns
+        if columns is None:
+            return
+
+        if not columns:
+            self._update_tab("tab-columns", "[dim]No columns found.[/dim]")
+            return
+
+        from mydba_tui.services.browser import ColumnInfo
+
+        cols = [c for c in columns if isinstance(c, ColumnInfo)]
+
+        # Dynamic column width for Type
+        max_type_len = max(len(col.col_type) for col in cols)
+        type_width = max(max_type_len + 2, 15)
+
+        lines: list[str] = []
+        lines.append(
+            f"[bold]{'#':<4}{'Name':<32}{'Type':<{type_width}}{'Null':<6}{'Key':<5}{'Extra'}[/bold]"
+        )
+        lines.append(f"{'─' * 4}{'─' * 32}{'─' * type_width}{'─' * 6}{'─' * 5}{'─' * 20}")
+        for col in cols:
+            nullable = "YES" if col.nullable == "YES" else "NO"
+            if col.key == "PRI":
+                key_display = "[bold green]PRI[/bold green]"
+            elif col.key == "UNI":
+                key_display = "[green]UNI[/green]"
+            elif col.key == "MUL":
+                key_display = "[cyan]MUL[/cyan]"
+            else:
+                key_display = ""
             lines.append(
-                f"  [bold]{'#':<3} {'Name':<30} {'Type':<20} "
-                f"{'Null':<5} {'Key':<4} {'Extra'}[/bold]"
+                f"{col.position:<4}{col.name:<32}"
+                f"[dim]{col.col_type:<{type_width}}[/dim]"
+                f"{nullable:<6}{key_display:<5} {col.extra}"
             )
-            lines.append(f"  {'─' * 3} {'─' * 30} {'─' * 20} {'─' * 5} {'─' * 4} {'─' * 15}")
-            for col in columns:
-                nullable = "YES" if col.nullable == "YES" else "NO"
-                key_display = (
-                    f"[bold green]{col.key}[/bold green]"
-                    if col.key == "PRI"
-                    else f"[cyan]{col.key}[/cyan]"
-                    if col.key
-                    else ""
-                )
-                lines.append(
-                    f"  {col.position:<3} {col.name:<30} "
-                    f"[dim]{col.col_type:<20}[/dim] "
-                    f"{nullable:<5} {key_display:<4} {col.extra}"
-                )
 
-        # Format indexes
-        lines.append("")
-        lines.append("[bold yellow]Indexes[/bold yellow]")
-        if indexes:
-            # Group by index name, show columns with cardinality and selectivity
-            seen: set[str] = set()
-            for idx in indexes:
-                if idx.name in seen:
-                    continue
+        self._update_tab("tab-columns", "\n".join(lines))
+
+    def _render_indexes_tab(self) -> None:
+        """Render indexes from cached data."""
+        from mydba_tui.services.browser import IndexInfo, TableInfo
+
+        indexes = self._table_indexes
+        info = self._table_info
+        index_sizes = self._table_index_sizes
+
+        if indexes is None:
+            return
+        if not indexes:
+            self._update_tab("tab-indexes", "[dim]No indexes.[/dim]")
+            return
+
+        idxs = [i for i in indexes if isinstance(i, IndexInfo)]
+        row_count = info.row_count if isinstance(info, TableInfo) else 0
+
+        lines: list[str] = []
+
+        # Group by index name, PRIMARY first
+        index_names: list[str] = []
+        seen: set[str] = set()
+        for idx in idxs:
+            if idx.name not in seen:
                 seen.add(idx.name)
+                index_names.append(idx.name)
 
-                # Collect all columns for this index
-                idx_entries = [i for i in indexes if i.name == idx.name]
-                cols_parts = []
-                for entry in idx_entries:
-                    col_display = entry.expression if entry.expression else entry.column
-                    cols_parts.append(col_display)
-                cols_str = ", ".join(cols_parts)
+        index_names.sort(key=lambda n: (0 if n == "PRIMARY" else 1, n))
 
-                # Build index header
-                if idx.name == "PRIMARY":
-                    prefix = "[bold green]PRIMARY[/bold green]"
-                elif idx.non_unique == 0:
-                    prefix = f"[green]UNIQUE[/green] {idx.name}"
-                else:
-                    prefix = idx.name
+        for idx_name in index_names:
+            idx_entries = [i for i in idxs if i.name == idx_name]
+            first = idx_entries[0]
 
-                # Visibility flag
-                vis_flag = " [dim]— INVISIBLE[/dim]" if idx.visible == "NO" else ""
+            # Build columns list
+            cols_parts = []
+            for entry in idx_entries:
+                col_display = entry.expression if entry.expression else entry.column
+                cols_parts.append(col_display)
+            cols_str = ", ".join(cols_parts)
 
-                lines.append(f"  {prefix} [dim]({idx.index_type}){vis_flag}[/dim]")
-                lines.append(f"    Columns: [cyan]{cols_str}[/cyan]")
+            # Index header
+            if idx_name == "PRIMARY":
+                prefix = "[bold green]PRIMARY[/bold green]"
+            elif first.non_unique == 0:
+                prefix = f"[green]UNIQUE[/green] {idx_name}"
+            else:
+                prefix = idx_name
 
-                # Cardinality (use the last entry's cardinality — full index cardinality)
-                last_entry = idx_entries[-1]
-                if last_entry.cardinality > 0:
-                    card_str = f"{last_entry.cardinality:,}"
-                    # Selectivity
-                    if info.row_count > 0:
-                        selectivity = last_entry.cardinality / info.row_count * 100
-                        sel_str = f"{selectivity:.1f}%"
-                        if selectivity < 1.0 and idx.name != "PRIMARY":
-                            card_str += (
-                                f" [dim](selectivity: {sel_str})[/dim] [yellow]⚠ low[/yellow]"
-                            )
-                        else:
-                            card_str += f" [dim](selectivity: {sel_str})[/dim]"
-                    lines.append(f"    Cardinality: {card_str}")
+            vis_flag = " — [dim]INVISIBLE[/dim]" if first.visible == "NO" else ""
+            lines.append(f"{prefix} [dim]({first.index_type}){vis_flag}[/dim]")
+            lines.append(f"  Columns: [cyan]{cols_str}[/cyan]")
 
-                # Comment if present
-                if idx.comment:
-                    lines.append(f"    Comment: {idx.comment}")
+            # Cardinality and selectivity
+            last_entry = idx_entries[-1]
+            if last_entry.cardinality > 0:
+                card_str = f"{last_entry.cardinality:,}"
+                if row_count > 0:
+                    selectivity = last_entry.cardinality / row_count * 100
+                    sel_str = f"{selectivity:.1f}%"
+                    if selectivity < 1.0 and idx_name != "PRIMARY":
+                        card_str += f" [dim](selectivity: {sel_str})[/dim] [yellow]⚠ low[/yellow]"
+                    else:
+                        card_str += f" [dim](selectivity: {sel_str})[/dim]"
+                lines.append(f"  Cardinality: {card_str}")
 
-                lines.append("")
+            # Index size (from innodb_index_stats)
+            if idx_name in index_sizes:
+                size_str = _format_bytes(index_sizes[idx_name])
+                lines.append(f"  Size: {size_str}")
+
+            if first.comment:
+                lines.append(f"  Comment: {first.comment}")
+
+            lines.append("")
+
+        self._update_tab("tab-indexes", "\n".join(lines))
+
+    def _render_ddl_tab(self) -> None:
+        """Render DDL from cached data."""
+        if self._table_ddl:
+            self._update_tab("tab-ddl", self._table_ddl)
         else:
-            lines.append("  [dim]No indexes[/dim]")
+            self._update_tab("tab-ddl", "[dim]No DDL available.[/dim]")
 
-        content.update("\n".join(lines))
+    def _update_tab(self, tab_id: str, content: str) -> None:
+        """Update the content of a tab pane by ID."""
+        try:
+            pane = self.query_one(f"#{tab_id}", TabPane)
+            pane.remove_children()
+            pane.mount(Static(content, classes="tab-content"))
+        except Exception:
+            pass
+
+    def action_switch_focus(self) -> None:
+        """Switch focus between browser tree and content panel."""
+        self._focus_on_tree = not self._focus_on_tree
+        if self._focus_on_tree:
+            self.query_one("#browser-tree", Tree).focus()
+        else:
+            try:
+                tabs = self.query_one("#metadata-tabs", TabbedContent)
+                tabs.focus()
+            except Exception:
+                pass
 
     def action_open_profiles(self) -> None:
         """Navigate to Connection Profiles."""
@@ -370,6 +519,34 @@ class MainWorkspaceScreen(Screen[None]):
     def action_quit(self) -> None:
         """Exit the application."""
         self.app.exit()
+
+
+class _TableMetadataTabs(Vertical):
+    """Widget containing the tabbed metadata view for a table."""
+
+    def __init__(self, schema: str, table: str) -> None:
+        super().__init__()
+        self._schema = schema
+        self._table = table
+
+    def compose(self) -> ComposeResult:
+        with TabbedContent(id="metadata-tabs"):
+            with TabPane("General", id="tab-general"):
+                yield Static("Loading...", classes="tab-content")
+            with TabPane("Columns", id="tab-columns"):
+                yield Static("", classes="tab-content")
+            with TabPane("Indexes", id="tab-indexes"):
+                yield Static("", classes="tab-content")
+            with TabPane("Partitions", id="tab-partitions"):
+                yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
+            with TabPane("Foreign Keys", id="tab-fk"):
+                yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
+            with TabPane("Triggers", id="tab-triggers"):
+                yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
+            with TabPane("Grants", id="tab-grants"):
+                yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
+            with TabPane("DDL", id="tab-ddl"):
+                yield Static("", classes="tab-content")
 
 
 def _format_bytes(size: int) -> str:

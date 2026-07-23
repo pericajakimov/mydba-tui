@@ -70,6 +70,15 @@ def test_load_table_indexes_sql() -> None:
     assert "column_name" in sql
 
 
+def test_load_index_sizes_sql() -> None:
+    """Should load the index_sizes SQL file."""
+    sql = load_sql("browser/index_sizes.sql")
+    assert "index_name" in sql
+    assert "innodb_index_stats" in sql
+    assert "{schema}" in sql
+    assert "{table}" in sql
+
+
 def test_load_nonexistent_file() -> None:
     """Should raise FileNotFoundError for missing SQL files."""
     with pytest.raises(FileNotFoundError):

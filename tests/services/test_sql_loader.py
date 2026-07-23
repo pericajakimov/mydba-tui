@@ -79,6 +79,24 @@ def test_load_index_sizes_sql() -> None:
     assert "{table}" in sql
 
 
+def test_load_fk_outgoing_sql() -> None:
+    """Should load the table_fk_outgoing SQL file."""
+    sql = load_sql("browser/table_fk_outgoing.sql")
+    assert "constraint_name" in sql
+    assert "referential_constraints" in sql
+    assert "{schema}" in sql
+    assert "{table}" in sql
+
+
+def test_load_fk_incoming_sql() -> None:
+    """Should load the table_fk_incoming SQL file."""
+    sql = load_sql("browser/table_fk_incoming.sql")
+    assert "constraint_name" in sql
+    assert "referenced_table_name" in sql
+    assert "{schema}" in sql
+    assert "{table}" in sql
+
+
 def test_load_nonexistent_file() -> None:
     """Should raise FileNotFoundError for missing SQL files."""
     with pytest.raises(FileNotFoundError):

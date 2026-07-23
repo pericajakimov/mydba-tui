@@ -4,11 +4,14 @@ from unittest.mock import MagicMock, patch
 
 from mydba_tui.services.browser import (
     ColumnInfo,
+    ForeignKeyInfo,
     IndexInfo,
     IndexSizeInfo,
     ObjectCounts,
     TableInfo,
     get_index_sizes,
+    get_table_fk_incoming,
+    get_table_fk_outgoing,
 )
 
 
@@ -129,3 +132,120 @@ def test_get_index_sizes_empty_table(mock_load_sql: MagicMock) -> None:
     result = get_index_sizes(mock_conn, "mydb", "empty_table")
 
     assert result == {}
+
+
+def test_foreign_key_info_defaults() -> None:
+    """ForeignKeyInfo should have sensible defaults."""
+    fk = ForeignKeyInfo()
+    assert fk.constraint_name == ""
+    assert fk.column == ""
+    assert fk.referenced_table == ""
+    assert fk.referenced_column == ""
+    assert fk.ordinal == 1
+    assert fk.delete_rule == "NO ACTION"
+    assert fk.update_rule == "NO ACTION"
+    assert fk.source_table == ""
+
+
+def test_foreign_key_info_with_values() -> None:
+    """ForeignKeyInfo should hold provided values."""
+    fk = ForeignKeyInfo(
+        constraint_name="fk_order_customer",
+        column="customer_id",
+        referenced_table="customers",
+        referenced_column="id",
+        ordinal=1,
+        delete_rule="CASCADE",
+        update_rule="NO ACTION",
+    )
+    assert fk.constraint_name == "fk_order_customer"
+    assert fk.column == "customer_id"
+    assert fk.referenced_table == "customers"
+    assert fk.referenced_column == "id"
+    assert fk.delete_rule == "CASCADE"
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_fk_outgoing_returns_list(mock_load_sql: MagicMock) -> None:
+    """get_table_fk_outgoing should return a list of ForeignKeyInfo."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("fk_order_customer", "customer_id", "customers", "id", 1, "CASCADE", "NO ACTION"),
+    ]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_fk_outgoing(mock_conn, "mydb", "orders")
+
+    assert len(result) == 1
+    assert result[0].constraint_name == "fk_order_customer"
+    assert result[0].column == "customer_id"
+    assert result[0].referenced_table == "customers"
+    assert result[0].referenced_column == "id"
+    assert result[0].delete_rule == "CASCADE"
+    assert result[0].update_rule == "NO ACTION"
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_fk_outgoing_multi_column(mock_load_sql: MagicMock) -> None:
+    """get_table_fk_outgoing should handle multi-column FKs."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("fk_composite", "col_a", "target", "ref_a", 1, "RESTRICT", "NO ACTION"),
+        ("fk_composite", "col_b", "target", "ref_b", 2, "RESTRICT", "NO ACTION"),
+    ]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_fk_outgoing(mock_conn, "mydb", "orders")
+
+    assert len(result) == 2
+    assert result[0].ordinal == 1
+    assert result[1].ordinal == 2
+    assert result[0].column == "col_a"
+    assert result[1].column == "col_b"
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_fk_incoming_returns_list(mock_load_sql: MagicMock) -> None:
+    """get_table_fk_incoming should return a list with source_table populated."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("fk_item_order", "order_items", "order_id", "id", 1, "CASCADE", "NO ACTION"),
+    ]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_fk_incoming(mock_conn, "mydb", "orders")
+
+    assert len(result) == 1
+    assert result[0].constraint_name == "fk_item_order"
+    assert result[0].source_table == "order_items"
+    assert result[0].column == "order_id"
+    assert result[0].referenced_column == "id"
+    assert result[0].delete_rule == "CASCADE"
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_fk_incoming_empty(mock_load_sql: MagicMock) -> None:
+    """get_table_fk_incoming should return empty list when no refs exist."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = []
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_fk_incoming(mock_conn, "mydb", "standalone_table")
+
+    assert result == []

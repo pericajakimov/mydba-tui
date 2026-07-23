@@ -73,6 +73,8 @@ class MainWorkspaceScreen(Screen[None]):
         self._table_columns: Any = None
         self._table_indexes: Any = None
         self._table_index_sizes: dict[str, int] = {}
+        self._table_fk_outgoing: Any = None
+        self._table_fk_incoming: Any = None
         self._table_ddl: str = ""
 
     def compose(self) -> ComposeResult:
@@ -266,6 +268,8 @@ class MainWorkspaceScreen(Screen[None]):
         from mydba_tui.services.browser import (
             get_index_sizes,
             get_table_columns,
+            get_table_fk_incoming,
+            get_table_fk_outgoing,
             get_table_indexes,
             get_table_info,
         )
@@ -280,6 +284,8 @@ class MainWorkspaceScreen(Screen[None]):
             self._table_columns = get_table_columns(conn_result.connection, schema, table)
             self._table_indexes = get_table_indexes(conn_result.connection, schema, table)
             self._table_index_sizes = get_index_sizes(conn_result.connection, schema, table)
+            self._table_fk_outgoing = get_table_fk_outgoing(conn_result.connection, schema, table)
+            self._table_fk_incoming = get_table_fk_incoming(conn_result.connection, schema, table)
         except Exception as e:
             self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
             return
@@ -324,6 +330,8 @@ class MainWorkspaceScreen(Screen[None]):
             self._render_columns_tab()
         elif pane_id == "tab-indexes":
             self._render_indexes_tab()
+        elif pane_id == "tab-fk":
+            self._render_fk_tab()
         elif pane_id == "tab-ddl":
             self._render_ddl_tab()
 
@@ -484,6 +492,106 @@ class MainWorkspaceScreen(Screen[None]):
 
         self._update_tab("tab-indexes", "\n".join(lines))
 
+    def _render_fk_tab(self) -> None:
+        """Render foreign keys from cached data."""
+        from mydba_tui.services.browser import ForeignKeyInfo
+
+        outgoing = self._table_fk_outgoing
+        incoming = self._table_fk_incoming
+        table = self._selected_object
+
+        if outgoing is None and incoming is None:
+            return
+
+        out_fks = [fk for fk in (outgoing or []) if isinstance(fk, ForeignKeyInfo)]
+        in_fks = [fk for fk in (incoming or []) if isinstance(fk, ForeignKeyInfo)]
+
+        if not out_fks and not in_fks:
+            self._update_tab("tab-fk", "[dim]No foreign keys.[/dim]")
+            return
+
+        lines: list[str] = []
+
+        # --- Outgoing: this table's FK constraints ---
+        if out_fks:
+            lines.append("[bold]References[/bold]\n")
+
+            # Group by constraint name
+            constraint_names: list[str] = []
+            seen: set[str] = set()
+            for fk in out_fks:
+                if fk.constraint_name not in seen:
+                    seen.add(fk.constraint_name)
+                    constraint_names.append(fk.constraint_name)
+
+            for cname in constraint_names:
+                entries = [fk for fk in out_fks if fk.constraint_name == cname]
+                first = entries[0]
+
+                # Arrow line: col1, col2 → target(col1, col2)
+                src_cols = ", ".join(e.column for e in entries)
+                ref_cols = ", ".join(e.referenced_column for e in entries)
+                lines.append(
+                    f"[cyan]{src_cols}[/cyan] → "
+                    f"[cyan]{first.referenced_table}[/cyan]({ref_cols})"
+                )
+
+                # DDL-style breakdown (dimmed)
+                fk_cols = ", ".join(f"`{e.column}`" for e in entries)
+                ref_cols_q = ", ".join(f"`{e.referenced_column}`" for e in entries)
+                lines.append(f"  [dim]CONSTRAINT `{cname}`[/dim]")
+                lines.append(f"    [dim]FOREIGN KEY ({fk_cols})[/dim]")
+                lines.append(
+                    f"    [dim]REFERENCES `{first.referenced_table}` ({ref_cols_q})[/dim]"
+                )
+                lines.append(
+                    f"    [dim]ON DELETE {first.delete_rule} "
+                    f"ON UPDATE {first.update_rule}[/dim]"
+                )
+                lines.append("")
+
+        # --- Incoming: other tables referencing this table ---
+        if in_fks:
+            if out_fks:
+                lines.append("")
+            lines.append("[bold]Referenced By[/bold]\n")
+
+            # Group by constraint name
+            constraint_names = []
+            seen = set()
+            for fk in in_fks:
+                if fk.constraint_name not in seen:
+                    seen.add(fk.constraint_name)
+                    constraint_names.append(fk.constraint_name)
+
+            for cname in constraint_names:
+                entries = [fk for fk in in_fks if fk.constraint_name == cname]
+                first = entries[0]
+
+                # Arrow line: source_table(col1, col2) → this_col1, this_col2
+                src_cols = ", ".join(e.column for e in entries)
+                ref_cols = ", ".join(e.referenced_column for e in entries)
+                lines.append(
+                    f"[cyan]{first.source_table}[/cyan]({src_cols}) → "
+                    f"[cyan]{ref_cols}[/cyan]"
+                )
+
+                # DDL-style breakdown (dimmed)
+                fk_cols = ", ".join(f"`{e.column}`" for e in entries)
+                ref_cols_q = ", ".join(f"`{e.referenced_column}`" for e in entries)
+                lines.append(f"  [dim]CONSTRAINT `{cname}`[/dim]")
+                lines.append(f"    [dim]FOREIGN KEY ({fk_cols})[/dim]")
+                lines.append(
+                    f"    [dim]REFERENCES `{table}` ({ref_cols_q})[/dim]"
+                )
+                lines.append(
+                    f"    [dim]ON DELETE {first.delete_rule} "
+                    f"ON UPDATE {first.update_rule}[/dim]"
+                )
+                lines.append("")
+
+        self._update_tab("tab-fk", "\n".join(lines))
+
     def _render_ddl_tab(self) -> None:
         """Render DDL from cached data."""
         if self._table_ddl:
@@ -540,7 +648,7 @@ class _TableMetadataTabs(Vertical):
             with TabPane("Partitions", id="tab-partitions"):
                 yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
             with TabPane("Foreign Keys", id="tab-fk"):
-                yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
+                yield Static("", classes="tab-content")
             with TabPane("Triggers", id="tab-triggers"):
                 yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
             with TabPane("Grants", id="tab-grants"):

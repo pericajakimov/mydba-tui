@@ -242,6 +242,31 @@ class IndexSizeInfo:
     size_bytes: int = 0
 
 
+@dataclass(slots=True)
+class ForeignKeyInfo:
+    """Foreign key constraint information (one entry per column in FK).
+
+    Attributes:
+        constraint_name: Constraint name.
+        column: Source column name.
+        referenced_table: Referenced table name.
+        referenced_column: Referenced column name.
+        ordinal: Position in multi-column FK.
+        delete_rule: ON DELETE action (CASCADE, SET NULL, RESTRICT, NO ACTION).
+        update_rule: ON UPDATE action.
+        source_table: Source table name (populated for incoming FKs only).
+    """
+
+    constraint_name: str = ""
+    column: str = ""
+    referenced_table: str = ""
+    referenced_column: str = ""
+    ordinal: int = 1
+    delete_rule: str = "NO ACTION"
+    update_rule: str = "NO ACTION"
+    source_table: str = ""
+
+
 def get_table_info(
     connection: MySQLConnectionAbstract | PooledMySQLConnection,
     schema: str,
@@ -410,3 +435,81 @@ def get_index_sizes(
         str(row[0] or ""): int(row[1] or 0)  # type: ignore[arg-type,index]
         for row in rows
     }
+
+
+def get_table_fk_outgoing(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    table: str,
+) -> list[ForeignKeyInfo]:
+    """Get outgoing foreign keys defined on this table.
+
+    Args:
+        connection: Active MySQL connection.
+        schema: Schema name.
+        table: Table name.
+
+    Returns:
+        List of ForeignKeyInfo (one per column per FK constraint).
+    """
+    sql_template = load_sql("browser/table_fk_outgoing.sql")
+    sql = sql_template.replace("{schema}", schema).replace("{table}", table)
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    rows = cursor.fetchall()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, "browser.fk_outgoing")
+
+    return [
+        ForeignKeyInfo(
+            constraint_name=str(row[0] or ""),  # type: ignore[index]
+            column=str(row[1] or ""),  # type: ignore[index]
+            referenced_table=str(row[2] or ""),  # type: ignore[index]
+            referenced_column=str(row[3] or ""),  # type: ignore[index]
+            ordinal=int(row[4] or 1),  # type: ignore[arg-type,index]
+            delete_rule=str(row[5] or "NO ACTION"),  # type: ignore[index]
+            update_rule=str(row[6] or "NO ACTION"),  # type: ignore[index]
+        )
+        for row in rows
+    ]
+
+
+def get_table_fk_incoming(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    table: str,
+) -> list[ForeignKeyInfo]:
+    """Get incoming foreign keys from other tables referencing this table.
+
+    Args:
+        connection: Active MySQL connection.
+        schema: Schema name.
+        table: Table name.
+
+    Returns:
+        List of ForeignKeyInfo (one per column per FK constraint).
+    """
+    sql_template = load_sql("browser/table_fk_incoming.sql")
+    sql = sql_template.replace("{schema}", schema).replace("{table}", table)
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    rows = cursor.fetchall()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, "browser.fk_incoming")
+
+    return [
+        ForeignKeyInfo(
+            constraint_name=str(row[0] or ""),  # type: ignore[index]
+            source_table=str(row[1] or ""),  # type: ignore[index]
+            column=str(row[2] or ""),  # type: ignore[index]
+            referenced_column=str(row[3] or ""),  # type: ignore[index]
+            ordinal=int(row[4] or 1),  # type: ignore[arg-type,index]
+            delete_rule=str(row[5] or "NO ACTION"),  # type: ignore[index]
+            update_rule=str(row[6] or "NO ACTION"),  # type: ignore[index]
+        )
+        for row in rows
+    ]

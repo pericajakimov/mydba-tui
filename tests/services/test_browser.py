@@ -13,6 +13,7 @@ from mydba_tui.services.browser import (
     TableInfo,
     TriggerInfo,
     get_index_sizes,
+    get_sample_data,
     get_table_fk_incoming,
     get_table_fk_outgoing,
     get_table_grants,
@@ -474,3 +475,146 @@ def test_get_table_grants_empty(mock_load_sql: MagicMock) -> None:
     result = get_table_grants(mock_conn, "mydb", "no_grants_table")
 
     assert result == []
+
+
+@patch("mydba_tui.services.browser.log_sql")
+def test_get_sample_data_with_pk(mock_log: MagicMock) -> None:
+    """get_sample_data should order by PK and build smart column expressions."""
+    columns = [
+        ColumnInfo(position=1, name="id", col_type="int"),
+        ColumnInfo(position=2, name="name", col_type="varchar(100)"),
+    ]
+
+    mock_cursor_pk = MagicMock()
+    mock_cursor_pk.fetchall.return_value = [("id",)]
+
+    mock_cursor_data = MagicMock()
+    mock_cursor_data.fetchall.return_value = [
+        (1, "Alice"),
+        (2, "Bob"),
+    ]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.side_effect = [mock_cursor_pk, mock_cursor_data]
+
+    col_names, rows = get_sample_data(
+        mock_conn, "mydb", "users", columns=columns, order="ASC", limit=5
+    )
+
+    assert col_names == ["id", "name"]
+    assert len(rows) == 2
+    assert rows[0] == (1, "Alice")
+    # Verify the data query used ORDER BY
+    data_sql = mock_cursor_data.execute.call_args[0][0]
+    assert "ORDER BY `id` ASC" in data_sql
+    assert "LIMIT 5" in data_sql
+
+
+@patch("mydba_tui.services.browser.log_sql")
+def test_get_sample_data_no_pk(mock_log: MagicMock) -> None:
+    """get_sample_data should work without PK (no ORDER BY)."""
+    columns = [
+        ColumnInfo(position=1, name="col1", col_type="int"),
+        ColumnInfo(position=2, name="col2", col_type="varchar(50)"),
+    ]
+
+    mock_cursor_pk = MagicMock()
+    mock_cursor_pk.fetchall.return_value = []
+
+    mock_cursor_data = MagicMock()
+    mock_cursor_data.fetchall.return_value = [(1, "test")]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.side_effect = [mock_cursor_pk, mock_cursor_data]
+
+    col_names, rows = get_sample_data(
+        mock_conn, "mydb", "heap_table", columns=columns, order="DESC", limit=5
+    )
+
+    assert col_names == ["col1", "col2"]
+    assert len(rows) == 1
+    data_sql = mock_cursor_data.execute.call_args[0][0]
+    assert "ORDER BY" not in data_sql
+    assert "LIMIT 5" in data_sql
+
+
+@patch("mydba_tui.services.browser.log_sql")
+def test_get_sample_data_binary_columns(mock_log: MagicMock) -> None:
+    """get_sample_data should handle binary columns smartly."""
+    columns = [
+        ColumnInfo(position=1, name="id", col_type="int"),
+        ColumnInfo(position=2, name="uuid", col_type="binary(16)"),
+        ColumnInfo(position=3, name="payload", col_type="longblob"),
+    ]
+
+    mock_cursor_pk = MagicMock()
+    mock_cursor_pk.fetchall.return_value = [("id",)]
+
+    mock_cursor_data = MagicMock()
+    mock_cursor_data.fetchall.return_value = [(1, "0xABCD", "<binary>")]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.side_effect = [mock_cursor_pk, mock_cursor_data]
+
+    col_names, rows = get_sample_data(
+        mock_conn, "mydb", "blobs", columns=columns, order="ASC"
+    )
+
+    assert col_names == ["id", "uuid", "payload"]
+    data_sql = mock_cursor_data.execute.call_args[0][0]
+    # binary(16) <= 16 bytes → HEX
+    assert "HEX(`uuid`)" in data_sql
+    # longblob > 16 bytes → '<binary>'
+    assert "'<binary>' AS `payload`" in data_sql
+
+
+@patch("mydba_tui.services.browser.log_sql")
+def test_get_sample_data_text_truncation(mock_log: MagicMock) -> None:
+    """get_sample_data should truncate text columns at 100 chars."""
+    columns = [
+        ColumnInfo(position=1, name="id", col_type="int"),
+        ColumnInfo(position=2, name="body", col_type="text"),
+    ]
+
+    mock_cursor_pk = MagicMock()
+    mock_cursor_pk.fetchall.return_value = [("id",)]
+
+    mock_cursor_data = MagicMock()
+    mock_cursor_data.fetchall.return_value = [(1, "short text")]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.side_effect = [mock_cursor_pk, mock_cursor_data]
+
+    col_names, rows = get_sample_data(
+        mock_conn, "mydb", "posts", columns=columns, order="ASC"
+    )
+
+    assert col_names == ["id", "body"]
+    data_sql = mock_cursor_data.execute.call_args[0][0]
+    assert "LEFT(`body`, 100)" in data_sql
+    assert "'...'" in data_sql
+
+
+@patch("mydba_tui.services.browser.log_sql")
+def test_get_sample_data_empty_table(mock_log: MagicMock) -> None:
+    """get_sample_data should return empty rows for empty table."""
+    columns = [
+        ColumnInfo(position=1, name="id", col_type="int"),
+        ColumnInfo(position=2, name="name", col_type="varchar(50)"),
+    ]
+
+    mock_cursor_pk = MagicMock()
+    mock_cursor_pk.fetchall.return_value = [("id",)]
+
+    mock_cursor_data = MagicMock()
+    mock_cursor_data.fetchall.return_value = []
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.side_effect = [mock_cursor_pk, mock_cursor_data]
+
+    col_names, rows = get_sample_data(
+        mock_conn, "mydb", "empty_table", columns=columns
+    )
+
+    assert col_names == ["id", "name"]
+    assert rows == []

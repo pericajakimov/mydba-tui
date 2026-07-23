@@ -14,7 +14,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Static, TabbedContent, TabPane, Tree
+from textual.widgets import Button, Footer, Header, Static, TabbedContent, TabPane, Tree
 from textual.widgets.tree import TreeNode
 
 from mydba_tui.ui.widgets import StatusBar
@@ -63,6 +63,15 @@ class MainWorkspaceScreen(Screen[None]):
     #object-header {
         padding: 0 1;
         height: 1;
+    }
+
+    .sample-buttons {
+        height: 3;
+        padding: 0 1;
+    }
+
+    .sample-buttons Button {
+        margin-right: 1;
     }
     """
 
@@ -352,6 +361,10 @@ class MainWorkspaceScreen(Screen[None]):
             self._render_partitions_tab()
         elif pane_id == "tab-grants":
             self._render_grants_tab()
+        elif pane_id == "tab-sample":
+            self._update_sample_results(
+                "[dim]Click a button above to load sample data.[/dim]"
+            )
         elif pane_id == "tab-ddl":
             self._render_ddl_tab()
 
@@ -743,6 +756,72 @@ class MainWorkspaceScreen(Screen[None]):
         else:
             self._update_tab("tab-ddl", "[dim]No DDL available.[/dim]")
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle sample data button clicks."""
+        if event.button.id not in ("btn-sample-first", "btn-sample-last"):
+            return
+
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.services.browser import ColumnInfo, get_sample_data
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return
+
+        schema = self._selected_schema
+        table = self._selected_object
+        if not schema or not table:
+            return
+
+        # Get cached column metadata for smart SQL generation
+        columns = [
+            c for c in (self._table_columns or []) if isinstance(c, ColumnInfo)
+        ]
+
+        order = "ASC" if event.button.id == "btn-sample-first" else "DESC"
+
+        try:
+            col_names, rows = get_sample_data(
+                conn_result.connection, schema, table, columns=columns,
+                order=order, limit=5,
+            )
+        except Exception as e:
+            self._update_sample_results(f"[red]Error: {e}[/red]")
+            return
+
+        if not rows:
+            self._update_sample_results("[dim]No rows returned.[/dim]")
+            return
+
+        # Build vertical \G-style output
+        label = "First" if order == "ASC" else "Last"
+        max_name_len = max(len(name) for name in col_names)
+        lines: list[str] = []
+        lines.append(f"[dim]{label} {len(rows)} rows:[/dim]\n")
+
+        for row_num, row in enumerate(rows, 1):
+            lines.append(
+                f"[bold]{'*' * 27} {row_num}. row {'*' * 27}[/bold]"
+            )
+            for i, val in enumerate(row):
+                name = col_names[i]
+                if val is None:
+                    val_str = "[dim]NULL[/dim]"
+                else:
+                    val_str = str(val)
+                lines.append(f"{name:>{max_name_len}}: {val_str}")
+            lines.append("")
+
+        self._update_sample_results("\n".join(lines))
+
+    def _update_sample_results(self, content: str) -> None:
+        """Update the sample data results area."""
+        try:
+            results = self.query_one("#sample-results", Static)
+            results.update(content)
+        except Exception:
+            pass
+
     def _update_tab(self, tab_id: str, content: str) -> None:
         """Update the content of a tab pane by ID."""
         try:
@@ -803,6 +882,13 @@ class _TableMetadataTabs(Vertical):
                 yield Static("", classes="tab-content")
             with TabPane("DDL", id="tab-ddl"):
                 yield Static("", classes="tab-content")
+            with TabPane("Sample Data", id="tab-sample"):
+                yield Horizontal(
+                    Button("First 5 rows", id="btn-sample-first", variant="primary"),
+                    Button("Last 5 rows", id="btn-sample-last", variant="primary"),
+                    classes="sample-buttons",
+                )
+                yield Static("", id="sample-results", classes="tab-content")
 
 
 def _format_bytes(size: int) -> str:

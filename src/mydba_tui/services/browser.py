@@ -7,6 +7,7 @@ All SQL is loaded from sql/browser/ files and logged to the SQL log.
 
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from mysql.connector.abstracts import MySQLConnectionAbstract
 from mysql.connector.pooling import PooledMySQLConnection
@@ -702,3 +703,135 @@ def get_table_grants(
         )
         for row in rows
     ]
+
+
+def get_sample_data(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    table: str,
+    columns: list[ColumnInfo],
+    order: str = "ASC",
+    limit: int = 5,
+) -> tuple[list[str], list[tuple[Any, ...]]]:
+    """Get sample rows from a table with smart column expressions.
+
+    Builds per-column SELECT expressions based on column types:
+    - Binary > 16 bytes: shows '<binary>'
+    - Binary <= 16 bytes: shows HEX representation (0x...)
+    - Text/blob columns: truncated to 100 chars with '...' suffix
+    - Other columns: selected as-is
+
+    Detects the primary key columns and orders results accordingly.
+    Falls back to no ORDER BY if no primary key exists.
+
+    Args:
+        connection: Active MySQL connection.
+        schema: Schema name.
+        table: Table name.
+        columns: Column metadata from get_table_columns().
+        order: Sort direction ("ASC" for first rows, "DESC" for last rows).
+        limit: Maximum number of rows to return.
+
+    Returns:
+        Tuple of (column_names, rows).
+    """
+    # Build smart column expressions
+    col_exprs: list[str] = []
+    col_names: list[str] = []
+    for col in columns:
+        ctype = col.col_type.lower()
+        name = col.name
+
+        if _is_binary_type(ctype):
+            byte_size = _binary_max_bytes(ctype)
+            if byte_size > 16:
+                col_exprs.append(f"'<binary>' AS `{name}`")
+            else:
+                col_exprs.append(
+                    f"CONCAT('0x', HEX(`{name}`)) AS `{name}`"
+                )
+        elif _is_text_type(ctype):
+            col_exprs.append(
+                f"IF(CHAR_LENGTH(`{name}`) > 100, "
+                f"CONCAT(LEFT(`{name}`, 100), '...'), `{name}`) AS `{name}`"
+            )
+        else:
+            col_exprs.append(f"`{name}`")
+
+        col_names.append(name)
+
+    select_clause = ", ".join(col_exprs) if col_exprs else "*"
+
+    # Detect PK columns
+    pk_sql = (
+        "SELECT column_name FROM information_schema.key_column_usage "
+        f"WHERE table_schema = '{schema}' AND table_name = '{table}' "
+        "AND constraint_name = 'PRIMARY' ORDER BY ordinal_position"
+    )
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(pk_sql)
+    pk_rows = cursor.fetchall()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(pk_sql, duration, "browser.sample_pk")
+
+    pk_cols = [str(r[0]) for r in pk_rows]  # type: ignore[index]
+
+    # Build sample query
+    order_clause = ""
+    if pk_cols:
+        pk_str = ", ".join(f"`{c}`" for c in pk_cols)
+        order_clause = f" ORDER BY {pk_str} {order}"
+
+    sample_sql = (
+        f"SELECT {select_clause} FROM `{schema}`.`{table}`"
+        f"{order_clause} LIMIT {limit}"
+    )
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sample_sql)
+    rows = cursor.fetchall()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sample_sql, duration, "browser.sample_data")
+
+    return col_names, rows  # type: ignore[return-value]
+
+
+def _is_binary_type(col_type: str) -> bool:
+    """Check if a column type is binary/blob."""
+    return any(
+        t in col_type
+        for t in ("binary", "varbinary", "blob", "tinyblob", "mediumblob", "longblob")
+    )
+
+
+def _binary_max_bytes(col_type: str) -> int:
+    """Estimate max byte size for a binary column type."""
+    if "longblob" in col_type:
+        return 4294967295
+    if "mediumblob" in col_type:
+        return 16777215
+    if "blob" in col_type and "tiny" not in col_type:
+        return 65535
+    if "tinyblob" in col_type:
+        return 255
+    # varbinary(N) or binary(N) — extract N
+    import re
+
+    match = re.search(r"\((\d+)\)", col_type)
+    if match:
+        return int(match.group(1))
+    return 255  # default for binary without size
+
+
+def _is_text_type(col_type: str) -> bool:
+    """Check if a column type is text-like and may need truncation."""
+    return any(
+        t in col_type
+        for t in (
+            "text", "tinytext", "mediumtext", "longtext",
+            "varchar", "char", "json", "enum", "set",
+        )
+    )

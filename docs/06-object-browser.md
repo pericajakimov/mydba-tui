@@ -134,7 +134,6 @@ Available tabs:
 - Triggers
 - Grants
 - DDL
-- Events
 - Dependencies
 - Sample Data
 
@@ -328,41 +327,29 @@ Status: Planned for a future iteration as a separate tab.
 
 ---
 
-# Events (Future)
-
-The Events tab displays scheduled events associated with the table's schema that reference this table.
-
-For each event:
-
-- Name
-- Type (ONE TIME, RECURRING)
-- Schedule (interval/timing)
-- Status (ENABLED, DISABLED, SLAVESIDE_DISABLED)
-- Definer
-- SQL body
-
-Syntax highlighting for the body will be added in a future iteration alongside other SQL-displaying views.
-
-Status: Not yet implemented.
-
----
-
-# Sample Data (Future)
+# Sample Data
 
 Sample Data is optional and never loaded automatically.
 
 The tab provides two actions:
 
-- **First rows** — executes `SELECT * FROM table ORDER BY <pk> ASC LIMIT N`
-- **Last rows** — executes `SELECT * FROM table ORDER BY <pk> DESC LIMIT N`
+- **First rows** — executes `SELECT ... FROM table ORDER BY <pk> ASC LIMIT 5`
+- **Last rows** — executes `SELECT ... FROM table ORDER BY <pk> DESC LIMIT 5`
 
-Default limit: 10 rows. The limit will be configurable.
+Default limit: 5 rows. The limit will be configurable in a future iteration.
+
+If no primary key exists, the query omits the ORDER BY clause.
+
+Smart column handling based on column type:
+
+- Binary columns > 16 bytes: displayed as `<binary>` (not transferred from server)
+- Binary columns <= 16 bytes: displayed as hex (e.g., `0xA1B2C3...`)
+- Text/varchar/json columns: truncated to 100 characters with `...` suffix
+- Other columns: displayed as-is
+
+Results are presented in vertical format (similar to MySQL's `\G` output) with right-aligned column names, one value per line. This handles tables with many columns without horizontal overflow. NULL values are dimmed.
 
 The purpose is only to quickly verify how data inside the table looks. For advanced querying, the SQL Workspace module is available.
-
-Results are displayed in a tabular format with column headers.
-
-Status: Not yet implemented.
 
 ---
 

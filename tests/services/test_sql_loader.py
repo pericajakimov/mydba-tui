@@ -106,6 +106,15 @@ def test_load_table_triggers_sql() -> None:
     assert "{table}" in sql
 
 
+def test_load_table_partitions_sql() -> None:
+    """Should load the table_partitions SQL file."""
+    sql = load_sql("browser/table_partitions.sql")
+    assert "partition_name" in sql
+    assert "partition_description" in sql
+    assert "{schema}" in sql
+    assert "{table}" in sql
+
+
 def test_load_nonexistent_file() -> None:
     """Should raise FileNotFoundError for missing SQL files."""
     with pytest.raises(FileNotFoundError):

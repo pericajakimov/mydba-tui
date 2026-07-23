@@ -122,18 +122,21 @@ Sample data is always an explicit user action.
 
 The Table View provides quick access to the most useful administrative information.
 
-Available sections:
+A persistent header showing `schema.table` is displayed above the tabs, visible regardless of which tab is active.
 
-- General Information
-- DDL
+Available tabs:
+
+- General
 - Columns
 - Indexes
 - Partitions
-- Statistics
+- Foreign Keys
 - Triggers
-- Sample Data
 - Grants
+- DDL
+- Events
 - Dependencies
+- Sample Data
 
 ---
 
@@ -144,14 +147,21 @@ General Information provides a concise overview of the table.
 Displayed fields include:
 
 - Storage engine
-- Row count
+- Row format
+- Row count (approximate)
+- Average row length
 - Data size
 - Index size
 - Total size
 - Free space
 - Fragmentation percentage
+- Auto increment value
+- Collation
+- Create options
 - Creation time
 - Last update time
+- Last checked time
+- Comment
 
 The goal is to quickly determine the overall state of the table without reading the DDL.
 
@@ -163,12 +173,13 @@ The DDL view displays the output of `SHOW CREATE TABLE`.
 
 Requirements:
 
-- Syntax highlighted.
 - Proper indentation.
 - Scrollable.
 - Easy to read.
 
 The displayed SQL should closely resemble the output produced by `mysqldump`.
+
+Syntax highlighting will be added in a future iteration as a unified feature across all SQL-displaying views.
 
 ---
 
@@ -176,19 +187,21 @@ The displayed SQL should closely resemble the output produced by `mysqldump`.
 
 The Columns view displays:
 
+- Position
 - Column name
 - Data type
 - Nullable
+- Key type (PRI, UNI, MUL)
 - Default value
+- Extra (auto_increment, etc.)
 
-Information already obvious from the DDL is intentionally omitted.
+Information already obvious from the DDL is intentionally omitted from the default view.
 
-Examples:
+Examples of omitted fields:
 
 - Character set
 - Collation
 - Comments
-- Extra attributes
 
 These remain available in the DDL when needed.
 
@@ -198,13 +211,16 @@ These remain available in the DDL when needed.
 
 The Indexes view displays:
 
-- Index name
-- Columns
-- Index type
-- Cardinality
-- Size (where available)
+- Index name (PRIMARY highlighted, UNIQUE indicated)
+- Columns (including functional expressions)
+- Index type (BTREE, HASH, FULLTEXT, SPATIAL)
+- Cardinality with selectivity percentage
+- Low selectivity warning for non-primary indexes
+- Visibility (INVISIBLE flag when applicable)
+- Size per index (from `mysql.innodb_index_stats`, when available)
+- Comment
 
-The purpose is to provide a quick overview of index design and usefulness.
+Indexes are grouped by name with PRIMARY listed first. The purpose is to provide a quick overview of index design and usefulness.
 
 ---
 
@@ -212,35 +228,44 @@ The purpose is to provide a quick overview of index design and usefulness.
 
 The Partitions view displays information obtained from `information_schema.partitions`.
 
-Examples include:
+Non-partitioned tables display "Table is not partitioned."
+
+For partitioned tables, the view shows:
+
+Header (table-level):
+
+- Partition method (RANGE, LIST, HASH, KEY)
+- Partition expression
+
+Tabular per-partition details:
 
 - Partition name
-- Partition method
-- Partition expression
+- Description (range boundary or list values)
 - Row count
 - Data size
 - Index size
+- Total size
 
 This view should provide enough information for operational troubleshooting without requiring manual metadata queries.
 
 ---
 
-# Statistics
+# Foreign Keys
 
-The Statistics view presents operational information useful for understanding table behavior.
+The Foreign Keys view displays two sections:
 
-Potential sources include:
+**References** (outgoing): FK constraints defined on this table pointing to other tables.
 
-- `sys` schema
-- Performance Schema
-- Other server metadata
+**Referenced By** (incoming): FK constraints from other tables pointing to this table.
 
-Examples include:
+Each foreign key is displayed as:
 
-- I/O statistics
-- Wait statistics
+- Arrow summary line showing column mapping (e.g., `customer_id → customers(id)`)
+- Dimmed multi-line DDL-style declaration (CONSTRAINT, FOREIGN KEY, REFERENCES, ON DELETE/UPDATE rules)
 
-The exact contents may evolve over time.
+Multi-column foreign keys show all columns on one line.
+
+Note: MySQL does not support cross-schema foreign keys, so schema names are omitted.
 
 ---
 
@@ -250,29 +275,16 @@ Displays all triggers defined for the table.
 
 For each trigger:
 
-- Name
-- Event
-- Timing
-- SQL definition
+- Name (bold cyan)
+- Event (INSERT, UPDATE, DELETE)
+- Timing (BEFORE, AFTER)
+- Definer
+- Creation timestamp
+- SQL body (raw text)
 
-The SQL definition is syntax highlighted.
+Multiple triggers are separated by a horizontal line.
 
----
-
-# Sample Data
-
-Sample Data is optional.
-
-It is never loaded automatically.
-
-When requested, the Browser executes a simple query returning a small number of rows from the table.
-
-Typical limit:
-
-- 5 rows
-- 10 rows
-
-The purpose is only to verify table contents.
+Syntax highlighting for the body will be added in a future iteration.
 
 ---
 
@@ -301,27 +313,67 @@ user3
 
 The goal is to provide an immediate understanding of object access without reading multiple `SHOW GRANTS` statements.
 
+Status: Not yet implemented.
+
 ---
 
 # Dependencies
 
-The Dependencies view provides object relationships.
+The Dependencies view will provide object relationships determined by combining metadata and object definitions.
 
-Examples include:
+Hard-wired dependencies (from metadata):
 
-Incoming dependencies:
+- Foreign keys referencing this table (already shown in the Foreign Keys tab under "Referenced By").
 
-- Foreign keys referencing this table.
-
-Outgoing dependencies:
+Code-based dependencies (text search in definitions):
 
 - Views using the table.
 - Procedures using the table.
 - Functions using the table.
-- Triggers using the table.
+- Triggers referencing the table in their body.
 - Events using the table.
 
-Dependencies are determined by combining metadata and object definitions where appropriate.
+Code-based dependencies are best-effort (text matching in definitions) and will be clearly indicated as such.
+
+Status: Planned for a future iteration as a separate tab.
+
+---
+
+# Events (Future)
+
+The Events tab displays scheduled events associated with the table's schema that reference this table.
+
+For each event:
+
+- Name
+- Type (ONE TIME, RECURRING)
+- Schedule (interval/timing)
+- Status (ENABLED, DISABLED, SLAVESIDE_DISABLED)
+- Definer
+- SQL body
+
+Syntax highlighting for the body will be added in a future iteration alongside other SQL-displaying views.
+
+Status: Not yet implemented.
+
+---
+
+# Sample Data (Future)
+
+Sample Data is optional and never loaded automatically.
+
+The tab provides two actions:
+
+- **First rows** — executes `SELECT * FROM table ORDER BY <pk> ASC LIMIT N`
+- **Last rows** — executes `SELECT * FROM table ORDER BY <pk> DESC LIMIT N`
+
+Default limit: 10 rows. The limit will be configurable.
+
+The purpose is only to quickly verify how data inside the table looks. For advanced querying, the SQL Workspace module is available.
+
+Results are displayed in a tabular format with column headers.
+
+Status: Not yet implemented.
 
 ---
 

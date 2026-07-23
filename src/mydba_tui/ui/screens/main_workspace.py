@@ -59,6 +59,11 @@ class MainWorkspaceScreen(Screen[None]):
         padding: 1 2;
         overflow-y: auto;
     }
+
+    #object-header {
+        padding: 0 1;
+        height: 1;
+    }
     """
 
     def __init__(self) -> None:
@@ -76,6 +81,7 @@ class MainWorkspaceScreen(Screen[None]):
         self._table_fk_outgoing: Any = None
         self._table_fk_incoming: Any = None
         self._table_triggers: Any = None
+        self._table_partitions: Any = None
         self._table_ddl: str = ""
 
     def compose(self) -> ComposeResult:
@@ -273,6 +279,7 @@ class MainWorkspaceScreen(Screen[None]):
             get_table_fk_outgoing,
             get_table_indexes,
             get_table_info,
+            get_table_partitions,
             get_table_triggers,
         )
 
@@ -289,6 +296,7 @@ class MainWorkspaceScreen(Screen[None]):
             self._table_fk_outgoing = get_table_fk_outgoing(conn_result.connection, schema, table)
             self._table_fk_incoming = get_table_fk_incoming(conn_result.connection, schema, table)
             self._table_triggers = get_table_triggers(conn_result.connection, schema, table)
+            self._table_partitions = get_table_partitions(conn_result.connection, schema, table)
         except Exception as e:
             self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
             return
@@ -337,6 +345,8 @@ class MainWorkspaceScreen(Screen[None]):
             self._render_fk_tab()
         elif pane_id == "tab-triggers":
             self._render_triggers_tab()
+        elif pane_id == "tab-partitions":
+            self._render_partitions_tab()
         elif pane_id == "tab-ddl":
             self._render_ddl_tab()
 
@@ -348,14 +358,10 @@ class MainWorkspaceScreen(Screen[None]):
         if not isinstance(info, TableInfo):
             return
 
-        schema = self._selected_schema
-        table = self._selected_object
-
         total_size = info.data_size + info.index_size
         frag_pct = f"{(info.data_free / total_size * 100):.1f}%" if total_size > 0 else "0%"
 
         lines: list[str] = []
-        lines.append(f"[bold cyan]{schema}.{table}[/bold cyan] [dim](table)[/dim]\n")
         lines.append(f"        [dim]Engine:[/dim] {info.engine}")
         lines.append(f"    [dim]Row Format:[/dim] {info.row_format}")
         lines.append(f"[dim] Rows (approx):[/dim] {info.row_count:,}")
@@ -630,6 +636,60 @@ class MainWorkspaceScreen(Screen[None]):
 
         self._update_tab("tab-triggers", "\n".join(lines))
 
+    def _render_partitions_tab(self) -> None:
+        """Render partitions from cached data."""
+        from mydba_tui.services.browser import PartitionInfo
+
+        partitions = self._table_partitions
+
+        if partitions is None:
+            return
+        if not partitions:
+            self._update_tab("tab-partitions", "[dim]Table is not partitioned.[/dim]")
+            return
+
+        parts = [p for p in partitions if isinstance(p, PartitionInfo)]
+        if not parts:
+            self._update_tab("tab-partitions", "[dim]Table is not partitioned.[/dim]")
+            return
+
+        lines: list[str] = []
+
+        # Method and expression (table-level, same for all partitions)
+        first = parts[0]
+        lines.append(f"    [dim]Method:[/dim] {first.method}")
+        lines.append(f"[dim]Expression:[/dim] {first.expression}")
+        lines.append("")
+
+        # Dynamic column widths
+        max_name = max(len(p.name) for p in parts)
+        name_w = max(max_name + 2, 10)
+        max_desc = max(len(p.description) for p in parts)
+        desc_w = max(max_desc + 2, 13)
+
+        # Table header
+        hdr = (
+            f"{'#':<4}{'Name':<{name_w}}{'Description':<{desc_w}}"
+            f"{'Rows':>10}  {'Data Size':>10}  {'Index Size':>10}  {'Total':>10}"
+        )
+        lines.append(f"[bold]{hdr}[/bold]")
+        sep = (
+            f"{'─' * 3} {'─' * (name_w - 1)} {'─' * (desc_w - 1)}"
+            f" {'─' * 10}  {'─' * 10}  {'─' * 10}  {'─' * 10}"
+        )
+        lines.append(sep)
+
+        # Rows
+        for p in parts:
+            total = p.data_size + p.index_size
+            lines.append(
+                f"{p.ordinal:<4}{p.name:<{name_w}}{p.description:<{desc_w}}"
+                f"{p.row_count:>10,}  {_format_bytes(p.data_size):>10}"
+                f"  {_format_bytes(p.index_size):>10}  {_format_bytes(total):>10}"
+            )
+
+        self._update_tab("tab-partitions", "\n".join(lines))
+
     def _render_ddl_tab(self) -> None:
         """Render DDL from cached data."""
         if self._table_ddl:
@@ -676,6 +736,10 @@ class _TableMetadataTabs(Vertical):
         self._table = table
 
     def compose(self) -> ComposeResult:
+        yield Static(
+            f"[bold cyan]{self._schema}.{self._table}[/bold cyan] [dim](table)[/dim]",
+            id="object-header",
+        )
         with TabbedContent(id="metadata-tabs"):
             with TabPane("General", id="tab-general"):
                 yield Static("Loading...", classes="tab-content")
@@ -684,7 +748,7 @@ class _TableMetadataTabs(Vertical):
             with TabPane("Indexes", id="tab-indexes"):
                 yield Static("", classes="tab-content")
             with TabPane("Partitions", id="tab-partitions"):
-                yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
+                yield Static("", classes="tab-content")
             with TabPane("Foreign Keys", id="tab-fk"):
                 yield Static("", classes="tab-content")
             with TabPane("Triggers", id="tab-triggers"):

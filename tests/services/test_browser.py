@@ -8,11 +8,13 @@ from mydba_tui.services.browser import (
     IndexInfo,
     IndexSizeInfo,
     ObjectCounts,
+    PartitionInfo,
     TableInfo,
     TriggerInfo,
     get_index_sizes,
     get_table_fk_incoming,
     get_table_fk_outgoing,
+    get_table_partitions,
     get_table_triggers,
 )
 
@@ -317,5 +319,79 @@ def test_get_table_triggers_empty(mock_load_sql: MagicMock) -> None:
     mock_conn.cursor.return_value = mock_cursor
 
     result = get_table_triggers(mock_conn, "mydb", "simple_table")
+
+    assert result == []
+
+
+def test_partition_info_defaults() -> None:
+    """PartitionInfo should have sensible defaults."""
+    p = PartitionInfo()
+    assert p.name == ""
+    assert p.method == ""
+    assert p.expression == ""
+    assert p.description == ""
+    assert p.ordinal == 0
+    assert p.row_count == 0
+    assert p.data_size == 0
+    assert p.index_size == 0
+
+
+def test_partition_info_with_values() -> None:
+    """PartitionInfo should hold provided values."""
+    p = PartitionInfo(
+        name="p_2024",
+        method="RANGE",
+        expression="YEAR(created_at)",
+        description="2024",
+        ordinal=1,
+        row_count=5000,
+        data_size=1048576,
+        index_size=262144,
+    )
+    assert p.name == "p_2024"
+    assert p.method == "RANGE"
+    assert p.expression == "YEAR(created_at)"
+    assert p.description == "2024"
+    assert p.row_count == 5000
+    assert p.data_size == 1048576
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_partitions_returns_list(mock_load_sql: MagicMock) -> None:
+    """get_table_partitions should return a list of PartitionInfo."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("p_2023", "RANGE", "YEAR(dt)", "2023", 1, 1000, 524288, 131072),
+        ("p_2024", "RANGE", "YEAR(dt)", "2024", 2, 5000, 1048576, 262144),
+    ]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_partitions(mock_conn, "mydb", "events")
+
+    assert len(result) == 2
+    assert result[0].name == "p_2023"
+    assert result[0].method == "RANGE"
+    assert result[0].description == "2023"
+    assert result[0].row_count == 1000
+    assert result[1].name == "p_2024"
+    assert result[1].ordinal == 2
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_partitions_empty(mock_load_sql: MagicMock) -> None:
+    """get_table_partitions should return empty list for non-partitioned tables."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = []
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_partitions(mock_conn, "mydb", "simple_table")
 
     assert result == []

@@ -288,6 +288,31 @@ class TriggerInfo:
     body: str = ""
 
 
+@dataclass(slots=True)
+class PartitionInfo:
+    """Partition information for a table.
+
+    Attributes:
+        name: Partition name.
+        method: Partitioning method (RANGE, LIST, HASH, KEY).
+        expression: Partition expression.
+        description: Partition description (range value, list values, etc.).
+        ordinal: Ordinal position.
+        row_count: Approximate row count.
+        data_size: Data size in bytes.
+        index_size: Index size in bytes.
+    """
+
+    name: str = ""
+    method: str = ""
+    expression: str = ""
+    description: str = ""
+    ordinal: int = 0
+    row_count: int = 0
+    data_size: int = 0
+    index_size: int = 0
+
+
 def get_table_info(
     connection: MySQLConnectionAbstract | PooledMySQLConnection,
     schema: str,
@@ -569,6 +594,48 @@ def get_table_triggers(
             definer=str(row[3] or ""),  # type: ignore[index]
             created=str(row[4] or ""),  # type: ignore[index]
             body=str(row[5] or ""),  # type: ignore[index]
+        )
+        for row in rows
+    ]
+
+
+def get_table_partitions(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    table: str,
+) -> list[PartitionInfo]:
+    """Get partition information for a table.
+
+    Returns an empty list for non-partitioned tables.
+
+    Args:
+        connection: Active MySQL connection.
+        schema: Schema name.
+        table: Table name.
+
+    Returns:
+        List of PartitionInfo for each partition.
+    """
+    sql_template = load_sql("browser/table_partitions.sql")
+    sql = sql_template.replace("{schema}", schema).replace("{table}", table)
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    rows = cursor.fetchall()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, "browser.table_partitions")
+
+    return [
+        PartitionInfo(
+            name=str(row[0] or ""),  # type: ignore[index]
+            method=str(row[1] or ""),  # type: ignore[index]
+            expression=str(row[2] or ""),  # type: ignore[index]
+            description=str(row[3] or ""),  # type: ignore[index]
+            ordinal=int(row[4] or 0),  # type: ignore[arg-type,index]
+            row_count=int(row[5] or 0),  # type: ignore[arg-type,index]
+            data_size=int(row[6] or 0),  # type: ignore[arg-type,index]
+            index_size=int(row[7] or 0),  # type: ignore[arg-type,index]
         )
         for row in rows
     ]

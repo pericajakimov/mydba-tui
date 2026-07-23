@@ -1,3 +1,5 @@
+-- Function names for listing under a schema in the Object Browser.
+-- Called from: services/browser.py → get_objects(category="functions")
 SELECT
     routine_name
 FROM

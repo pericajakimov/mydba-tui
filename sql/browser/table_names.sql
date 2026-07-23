@@ -1,3 +1,5 @@
+-- Table names for listing under a schema in the Object Browser.
+-- Called from: services/browser.py → get_objects(category="tables")
 SELECT
     table_name
 FROM

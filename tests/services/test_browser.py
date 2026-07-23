@@ -1,6 +1,6 @@
 """Tests for the browser service."""
 
-from mydba_tui.services.browser import ObjectCounts
+from mydba_tui.services.browser import ColumnInfo, IndexInfo, ObjectCounts, TableInfo
 
 
 def test_object_counts_defaults() -> None:
@@ -23,3 +23,31 @@ def test_object_counts_with_values() -> None:
     assert counts.functions == 2
     assert counts.events == 1
     assert counts.triggers == 4
+
+
+def test_table_info_defaults() -> None:
+    """TableInfo should have sensible defaults."""
+    info = TableInfo()
+    assert info.name == ""
+    assert info.engine == ""
+    assert info.row_count == 0
+    assert info.auto_increment is None
+
+
+def test_column_info_defaults() -> None:
+    """ColumnInfo should have empty defaults."""
+    col = ColumnInfo()
+    assert col.position == 0
+    assert col.name == ""
+    assert col.col_type == ""
+
+
+def test_index_info_defaults() -> None:
+    """IndexInfo should have empty defaults."""
+    idx = IndexInfo()
+    assert idx.name == ""
+    assert idx.non_unique == 0
+    assert idx.column == ""
+    assert idx.cardinality == 0
+    assert idx.visible == "YES"
+    assert idx.expression == ""

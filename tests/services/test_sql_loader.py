@@ -7,7 +7,7 @@ from mydba_tui.services.sql_loader import load_sql
 
 def test_load_schemas_sql() -> None:
     """Should load the schemas SQL file."""
-    sql = load_sql("browser/schemas.sql")
+    sql = load_sql("browser/schema_names.sql")
     assert "schema_name" in sql
     assert "schemata" in sql
 
@@ -21,31 +21,53 @@ def test_load_object_counts_sql() -> None:
 
 
 def test_load_tables_sql() -> None:
-    """Should load the tables listing SQL file."""
-    sql = load_sql("browser/tables.sql")
+    """Should load the table names listing SQL file."""
+    sql = load_sql("browser/table_names.sql")
     assert "table_name" in sql
     assert "BASE TABLE" in sql
     assert "{schema}" in sql
 
 
 def test_load_views_sql() -> None:
-    """Should load the views listing SQL file."""
-    sql = load_sql("browser/views.sql")
+    """Should load the view names listing SQL file."""
+    sql = load_sql("browser/view_names.sql")
     assert "table_name" in sql
     assert "VIEW" in sql
 
 
 def test_load_procedures_sql() -> None:
-    """Should load the procedures listing SQL file."""
-    sql = load_sql("browser/procedures.sql")
+    """Should load the procedure names listing SQL file."""
+    sql = load_sql("browser/procedure_names.sql")
     assert "routine_name" in sql
     assert "PROCEDURE" in sql
 
 
 def test_load_triggers_sql() -> None:
-    """Should load the triggers listing SQL file."""
-    sql = load_sql("browser/triggers.sql")
+    """Should load the trigger names listing SQL file."""
+    sql = load_sql("browser/trigger_names.sql")
     assert "trigger_name" in sql
+
+
+def test_load_table_info_sql() -> None:
+    """Should load the table_info SQL file."""
+    sql = load_sql("browser/table_info.sql")
+    assert "engine" in sql
+    assert "{schema}" in sql
+    assert "{table}" in sql
+
+
+def test_load_table_columns_sql() -> None:
+    """Should load the table_columns SQL file."""
+    sql = load_sql("browser/table_columns.sql")
+    assert "column_name" in sql
+    assert "column_type" in sql
+
+
+def test_load_table_indexes_sql() -> None:
+    """Should load the table_indexes SQL file."""
+    sql = load_sql("browser/table_indexes.sql")
+    assert "index_name" in sql
+    assert "column_name" in sql
 
 
 def test_load_nonexistent_file() -> None:
@@ -56,6 +78,6 @@ def test_load_nonexistent_file() -> None:
 
 def test_load_returns_stripped_content() -> None:
     """Loaded SQL should be stripped of leading/trailing whitespace."""
-    sql = load_sql("browser/schemas.sql")
+    sql = load_sql("browser/schema_names.sql")
     assert not sql.startswith("\n")
     assert not sql.endswith("\n")

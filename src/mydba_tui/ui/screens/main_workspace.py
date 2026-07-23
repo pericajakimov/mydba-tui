@@ -75,6 +75,7 @@ class MainWorkspaceScreen(Screen[None]):
         self._table_index_sizes: dict[str, int] = {}
         self._table_fk_outgoing: Any = None
         self._table_fk_incoming: Any = None
+        self._table_triggers: Any = None
         self._table_ddl: str = ""
 
     def compose(self) -> ComposeResult:
@@ -272,6 +273,7 @@ class MainWorkspaceScreen(Screen[None]):
             get_table_fk_outgoing,
             get_table_indexes,
             get_table_info,
+            get_table_triggers,
         )
 
         conn_result = getattr(self.app, "db_connection", None)
@@ -286,6 +288,7 @@ class MainWorkspaceScreen(Screen[None]):
             self._table_index_sizes = get_index_sizes(conn_result.connection, schema, table)
             self._table_fk_outgoing = get_table_fk_outgoing(conn_result.connection, schema, table)
             self._table_fk_incoming = get_table_fk_incoming(conn_result.connection, schema, table)
+            self._table_triggers = get_table_triggers(conn_result.connection, schema, table)
         except Exception as e:
             self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
             return
@@ -332,6 +335,8 @@ class MainWorkspaceScreen(Screen[None]):
             self._render_indexes_tab()
         elif pane_id == "tab-fk":
             self._render_fk_tab()
+        elif pane_id == "tab-triggers":
+            self._render_triggers_tab()
         elif pane_id == "tab-ddl":
             self._render_ddl_tab()
 
@@ -592,6 +597,39 @@ class MainWorkspaceScreen(Screen[None]):
 
         self._update_tab("tab-fk", "\n".join(lines))
 
+    def _render_triggers_tab(self) -> None:
+        """Render triggers from cached data."""
+        from mydba_tui.services.browser import TriggerInfo
+
+        triggers = self._table_triggers
+
+        if triggers is None:
+            return
+        if not triggers:
+            self._update_tab("tab-triggers", "[dim]No triggers.[/dim]")
+            return
+
+        trigs = [t for t in triggers if isinstance(t, TriggerInfo)]
+        lines: list[str] = []
+
+        for i, trg in enumerate(trigs):
+            if i > 0:
+                lines.append("[dim]─────────────────────────────────────────[/dim]")
+                lines.append("")
+            # Header: name (TIMING EVENT)
+            lines.append(
+                f"[bold cyan]{trg.name}[/bold cyan] [dim]({trg.timing} {trg.event})[/dim]"
+            )
+            lines.append(f"  [dim]Definer:[/dim] {trg.definer}")
+            lines.append(f"  [dim]Created:[/dim] {trg.created}")
+            lines.append("")
+            # Body as raw text, indented
+            for body_line in trg.body.splitlines():
+                lines.append(f"  {body_line}")
+            lines.append("")
+
+        self._update_tab("tab-triggers", "\n".join(lines))
+
     def _render_ddl_tab(self) -> None:
         """Render DDL from cached data."""
         if self._table_ddl:
@@ -650,7 +688,7 @@ class _TableMetadataTabs(Vertical):
             with TabPane("Foreign Keys", id="tab-fk"):
                 yield Static("", classes="tab-content")
             with TabPane("Triggers", id="tab-triggers"):
-                yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
+                yield Static("", classes="tab-content")
             with TabPane("Grants", id="tab-grants"):
                 yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
             with TabPane("DDL", id="tab-ddl"):

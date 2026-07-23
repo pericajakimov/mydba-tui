@@ -267,6 +267,27 @@ class ForeignKeyInfo:
     source_table: str = ""
 
 
+@dataclass(slots=True)
+class TriggerInfo:
+    """Trigger information for a table.
+
+    Attributes:
+        name: Trigger name.
+        event: Event type (INSERT, UPDATE, DELETE).
+        timing: Action timing (BEFORE, AFTER).
+        definer: Definer account (user@host).
+        created: Creation timestamp.
+        body: Trigger SQL body (action_statement).
+    """
+
+    name: str = ""
+    event: str = ""
+    timing: str = ""
+    definer: str = ""
+    created: str = ""
+    body: str = ""
+
+
 def get_table_info(
     connection: MySQLConnectionAbstract | PooledMySQLConnection,
     schema: str,
@@ -510,6 +531,44 @@ def get_table_fk_incoming(
             ordinal=int(row[4] or 1),  # type: ignore[arg-type,index]
             delete_rule=str(row[5] or "NO ACTION"),  # type: ignore[index]
             update_rule=str(row[6] or "NO ACTION"),  # type: ignore[index]
+        )
+        for row in rows
+    ]
+
+
+def get_table_triggers(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    table: str,
+) -> list[TriggerInfo]:
+    """Get triggers defined on a table.
+
+    Args:
+        connection: Active MySQL connection.
+        schema: Schema name.
+        table: Table name.
+
+    Returns:
+        List of TriggerInfo for each trigger on the table.
+    """
+    sql_template = load_sql("browser/table_triggers.sql")
+    sql = sql_template.replace("{schema}", schema).replace("{table}", table)
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    rows = cursor.fetchall()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, "browser.table_triggers")
+
+    return [
+        TriggerInfo(
+            name=str(row[0] or ""),  # type: ignore[index]
+            event=str(row[1] or ""),  # type: ignore[index]
+            timing=str(row[2] or ""),  # type: ignore[index]
+            definer=str(row[3] or ""),  # type: ignore[index]
+            created=str(row[4] or ""),  # type: ignore[index]
+            body=str(row[5] or ""),  # type: ignore[index]
         )
         for row in rows
     ]

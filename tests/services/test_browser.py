@@ -9,9 +9,11 @@ from mydba_tui.services.browser import (
     IndexSizeInfo,
     ObjectCounts,
     TableInfo,
+    TriggerInfo,
     get_index_sizes,
     get_table_fk_incoming,
     get_table_fk_outgoing,
+    get_table_triggers,
 )
 
 
@@ -247,5 +249,73 @@ def test_get_table_fk_incoming_empty(mock_load_sql: MagicMock) -> None:
     mock_conn.cursor.return_value = mock_cursor
 
     result = get_table_fk_incoming(mock_conn, "mydb", "standalone_table")
+
+    assert result == []
+
+
+def test_trigger_info_defaults() -> None:
+    """TriggerInfo should have empty defaults."""
+    trg = TriggerInfo()
+    assert trg.name == ""
+    assert trg.event == ""
+    assert trg.timing == ""
+    assert trg.definer == ""
+    assert trg.created == ""
+    assert trg.body == ""
+
+
+def test_trigger_info_with_values() -> None:
+    """TriggerInfo should hold provided values."""
+    trg = TriggerInfo(
+        name="trg_audit",
+        event="INSERT",
+        timing="AFTER",
+        definer="root@localhost",
+        created="2024-03-15 10:00:00",
+        body="BEGIN\n  INSERT INTO log VALUES (NEW.id);\nEND",
+    )
+    assert trg.name == "trg_audit"
+    assert trg.event == "INSERT"
+    assert trg.timing == "AFTER"
+    assert trg.definer == "root@localhost"
+    assert "INSERT INTO log" in trg.body
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_triggers_returns_list(mock_load_sql: MagicMock) -> None:
+    """get_table_triggers should return a list of TriggerInfo."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("trg_audit", "INSERT", "BEFORE", "root@localhost", "2024-01-01 00:00:00", "BEGIN END"),
+        ("trg_update", "UPDATE", "AFTER", "app@%", "2024-02-01 00:00:00", "BEGIN END"),
+    ]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_triggers(mock_conn, "mydb", "orders")
+
+    assert len(result) == 2
+    assert result[0].name == "trg_audit"
+    assert result[0].timing == "BEFORE"
+    assert result[0].event == "INSERT"
+    assert result[1].name == "trg_update"
+    assert result[1].timing == "AFTER"
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_triggers_empty(mock_load_sql: MagicMock) -> None:
+    """get_table_triggers should return empty list when no triggers exist."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = []
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_triggers(mock_conn, "mydb", "simple_table")
 
     assert result == []

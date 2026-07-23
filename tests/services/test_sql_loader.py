@@ -97,6 +97,15 @@ def test_load_fk_incoming_sql() -> None:
     assert "{table}" in sql
 
 
+def test_load_table_triggers_sql() -> None:
+    """Should load the table_triggers SQL file."""
+    sql = load_sql("browser/table_triggers.sql")
+    assert "trigger_name" in sql
+    assert "action_statement" in sql
+    assert "{schema}" in sql
+    assert "{table}" in sql
+
+
 def test_load_nonexistent_file() -> None:
     """Should raise FileNotFoundError for missing SQL files."""
     with pytest.raises(FileNotFoundError):

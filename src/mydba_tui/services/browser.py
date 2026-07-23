@@ -712,17 +712,16 @@ def get_sample_data(
     columns: list[ColumnInfo],
     order: str = "ASC",
     limit: int = 5,
-) -> tuple[list[str], list[tuple[Any, ...]]]:
-    """Get sample rows from a table with smart column expressions.
+) -> tuple[list[str], list[list[str]]]:
+    """Get sample rows from a table and format values client-side.
 
-    Builds per-column SELECT expressions based on column types:
-    - Binary > 16 bytes: shows '<binary>'
-    - Binary <= 16 bytes: shows HEX representation (0x...)
-    - Text/blob columns: truncated to 100 chars with '...' suffix
-    - Other columns: selected as-is
-
-    Detects the primary key columns and orders results accordingly.
-    Falls back to no ORDER BY if no primary key exists.
+    Executes a simple SELECT * with ORDER BY primary key. Formatting
+    is applied in Python after fetching:
+    - Binary > 16 bytes: displayed as '<binary>'
+    - Binary <= 16 bytes: displayed as hex (0x...)
+    - Text longer than 100 chars: truncated with '...' suffix
+    - NULL: displayed as 'NULL'
+    - Other values: converted to string as-is
 
     Args:
         connection: Active MySQL connection.
@@ -733,61 +732,19 @@ def get_sample_data(
         limit: Maximum number of rows to return.
 
     Returns:
-        Tuple of (column_names, rows).
+        Tuple of (column_names, formatted_rows) where each row is a list of strings.
     """
-    # Build smart column expressions
-    col_exprs: list[str] = []
-    col_names: list[str] = []
-    for col in columns:
-        ctype = col.col_type.lower()
-        name = col.name
+    # Extract PK columns from cached column metadata
+    pk_cols = [col.name for col in columns if col.key == "PRI"]
+    col_names = [col.name for col in columns]
 
-        if _is_binary_type(ctype):
-            byte_size = _binary_max_bytes(ctype)
-            if byte_size > 16:
-                col_exprs.append(f"'<binary>' AS `{name}`")
-            else:
-                col_exprs.append(
-                    f"CONCAT('0x', HEX(`{name}`)) AS `{name}`"
-                )
-        elif _is_text_type(ctype):
-            col_exprs.append(
-                f"IF(CHAR_LENGTH(`{name}`) > 100, "
-                f"CONCAT(LEFT(`{name}`, 100), '...'), `{name}`) AS `{name}`"
-            )
-        else:
-            col_exprs.append(f"`{name}`")
-
-        col_names.append(name)
-
-    select_clause = ", ".join(col_exprs) if col_exprs else "*"
-
-    # Detect PK columns
-    pk_sql = (
-        "SELECT column_name FROM information_schema.key_column_usage "
-        f"WHERE table_schema = '{schema}' AND table_name = '{table}' "
-        "AND constraint_name = 'PRIMARY' ORDER BY ordinal_position"
-    )
-    start = time.perf_counter()
-    cursor = connection.cursor(buffered=True)
-    cursor.execute(pk_sql)
-    pk_rows = cursor.fetchall()
-    cursor.close()
-    duration = time.perf_counter() - start
-    log_sql(pk_sql, duration, "browser.sample_pk")
-
-    pk_cols = [str(r[0]) for r in pk_rows]  # type: ignore[index]
-
-    # Build sample query
+    # Build simple query
     order_clause = ""
     if pk_cols:
         pk_str = ", ".join(f"`{c}`" for c in pk_cols)
         order_clause = f" ORDER BY {pk_str} {order}"
 
-    sample_sql = (
-        f"SELECT {select_clause} FROM `{schema}`.`{table}`"
-        f"{order_clause} LIMIT {limit}"
-    )
+    sample_sql = f"SELECT * FROM `{schema}`.`{table}`{order_clause} LIMIT {limit}"
     start = time.perf_counter()
     cursor = connection.cursor(buffered=True)
     cursor.execute(sample_sql)
@@ -796,7 +753,40 @@ def get_sample_data(
     duration = time.perf_counter() - start
     log_sql(sample_sql, duration, "browser.sample_data")
 
-    return col_names, rows  # type: ignore[return-value]
+    # Format values client-side
+    formatted: list[list[str]] = []
+    for row in rows:
+        formatted_row: list[str] = []
+        for i, val in enumerate(row):
+            if val is None:
+                formatted_row.append("NULL")
+            elif i < len(columns):
+                formatted_row.append(_format_value(val, columns[i].col_type))
+            else:
+                formatted_row.append(str(val))
+        formatted.append(formatted_row)
+
+    return col_names, formatted
+
+
+def _format_value(val: Any, col_type: str) -> str:
+    """Format a single cell value based on column type."""
+    ctype = col_type.lower()
+
+    if _is_binary_type(ctype):
+        if isinstance(val, (bytes, bytearray)):
+            if len(val) > 16:
+                return "<binary>"
+            return "0x" + val.hex().upper()
+        return str(val)
+
+    if _is_text_type(ctype):
+        s = str(val)
+        if len(s) > 100:
+            return s[:100] + "..."
+        return s
+
+    return str(val)
 
 
 def _is_binary_type(col_type: str) -> bool:
@@ -805,25 +795,6 @@ def _is_binary_type(col_type: str) -> bool:
         t in col_type
         for t in ("binary", "varbinary", "blob", "tinyblob", "mediumblob", "longblob")
     )
-
-
-def _binary_max_bytes(col_type: str) -> int:
-    """Estimate max byte size for a binary column type."""
-    if "longblob" in col_type:
-        return 4294967295
-    if "mediumblob" in col_type:
-        return 16777215
-    if "blob" in col_type and "tiny" not in col_type:
-        return 65535
-    if "tinyblob" in col_type:
-        return 255
-    # varbinary(N) or binary(N) — extract N
-    import re
-
-    match = re.search(r"\((\d+)\)", col_type)
-    if match:
-        return int(match.group(1))
-    return 255  # default for binary without size
 
 
 def _is_text_type(col_type: str) -> bool:

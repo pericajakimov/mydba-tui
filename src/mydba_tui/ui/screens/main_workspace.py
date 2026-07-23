@@ -12,7 +12,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Static, TabbedContent, TabPane, Tree
 from textual.widgets.tree import TreeNode
@@ -48,16 +48,26 @@ class MainWorkspaceScreen(Screen[None]):
 
     #content-panel {
         width: 1fr;
-        overflow-y: auto;
     }
 
     #metadata-tabs {
         height: 1fr;
     }
 
+    ContentSwitcher {
+        height: 1fr;
+    }
+
+    TabPane {
+        height: 1fr;
+    }
+
+    TabPane > VerticalScroll {
+        height: 100%;
+    }
+
     .tab-content {
         padding: 1 2;
-        overflow-y: auto;
     }
 
     #object-header {
@@ -68,6 +78,10 @@ class MainWorkspaceScreen(Screen[None]):
     .sample-buttons {
         height: 3;
         padding: 0 1;
+    }
+
+    #sample-scroll {
+        height: 1fr;
     }
 
     .sample-buttons Button {
@@ -119,12 +133,37 @@ class MainWorkspaceScreen(Screen[None]):
         """Update status bar and reload schemas when returning to this screen."""
         self._sync_status_bar()
         self._load_schemas()
+        self._reset_content_panel()
 
     def _sync_status_bar(self) -> None:
         """Sync status bar with current connection state."""
         status = getattr(self.app, "connection_status", "")
         if status:
             self.query_one("#status-bar", StatusBar).status_text = status
+
+    def _reset_content_panel(self) -> None:
+        """Reset the content panel to initial state and clear cached data."""
+        self._selected_schema = ""
+        self._selected_object = ""
+        self._selected_category = ""
+        self._table_info = None
+        self._table_columns = None
+        self._table_indexes = None
+        self._table_index_sizes = {}
+        self._table_fk_outgoing = None
+        self._table_fk_incoming = None
+        self._table_triggers = None
+        self._table_partitions = None
+        self._table_grants = None
+        self._table_ddl = ""
+
+        content_panel = self.query_one("#content-panel", Vertical)
+        content_panel.remove_children()
+        content_panel.mount(
+            Static(
+                "[dim]Select an object from the browser to view its metadata.[/dim]",
+            )
+        )
 
     def _load_schemas(self) -> None:
         """Load schema list from the database into the tree."""
@@ -805,10 +844,12 @@ class MainWorkspaceScreen(Screen[None]):
             )
             for i, val in enumerate(row):
                 name = col_names[i]
-                if val is None:
+                if val == "NULL":
                     val_str = "[dim]NULL[/dim]"
+                elif val == "<binary>":
+                    val_str = "[dim]<binary>[/dim]"
                 else:
-                    val_str = str(val)
+                    val_str = val
                 lines.append(f"{name:>{max_name_len}}: {val_str}")
             lines.append("")
 
@@ -827,7 +868,9 @@ class MainWorkspaceScreen(Screen[None]):
         try:
             pane = self.query_one(f"#{tab_id}", TabPane)
             pane.remove_children()
-            pane.mount(Static(content, classes="tab-content"))
+            scroll = VerticalScroll(Static(content, classes="tab-content"))
+            scroll.styles.height = "100%"
+            pane.mount(scroll)
         except Exception:
             pass
 
@@ -859,6 +902,7 @@ class _TableMetadataTabs(Vertical):
         super().__init__()
         self._schema = schema
         self._table = table
+        self.styles.height = "1fr"
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -888,7 +932,8 @@ class _TableMetadataTabs(Vertical):
                     Button("Last 5 rows", id="btn-sample-last", variant="primary"),
                     classes="sample-buttons",
                 )
-                yield Static("", id="sample-results", classes="tab-content")
+                with VerticalScroll(id="sample-scroll"):
+                    yield Static("", id="sample-results", classes="tab-content")
 
 
 def _format_bytes(size: int) -> str:

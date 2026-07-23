@@ -82,6 +82,7 @@ class MainWorkspaceScreen(Screen[None]):
         self._table_fk_incoming: Any = None
         self._table_triggers: Any = None
         self._table_partitions: Any = None
+        self._table_grants: Any = None
         self._table_ddl: str = ""
 
     def compose(self) -> ComposeResult:
@@ -277,6 +278,7 @@ class MainWorkspaceScreen(Screen[None]):
             get_table_columns,
             get_table_fk_incoming,
             get_table_fk_outgoing,
+            get_table_grants,
             get_table_indexes,
             get_table_info,
             get_table_partitions,
@@ -297,6 +299,7 @@ class MainWorkspaceScreen(Screen[None]):
             self._table_fk_incoming = get_table_fk_incoming(conn_result.connection, schema, table)
             self._table_triggers = get_table_triggers(conn_result.connection, schema, table)
             self._table_partitions = get_table_partitions(conn_result.connection, schema, table)
+            self._table_grants = get_table_grants(conn_result.connection, schema, table)
         except Exception as e:
             self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
             return
@@ -347,6 +350,8 @@ class MainWorkspaceScreen(Screen[None]):
             self._render_triggers_tab()
         elif pane_id == "tab-partitions":
             self._render_partitions_tab()
+        elif pane_id == "tab-grants":
+            self._render_grants_tab()
         elif pane_id == "tab-ddl":
             self._render_ddl_tab()
 
@@ -690,6 +695,47 @@ class MainWorkspaceScreen(Screen[None]):
 
         self._update_tab("tab-partitions", "\n".join(lines))
 
+    def _render_grants_tab(self) -> None:
+        """Render table grants from cached data."""
+        from mydba_tui.services.browser import GrantInfo
+
+        grants = self._table_grants
+
+        if grants is None:
+            return
+        if not grants:
+            self._update_tab("tab-grants", "[dim]No grants.[/dim]")
+            return
+
+        grs = [g for g in grants if isinstance(g, GrantInfo)]
+        if not grs:
+            self._update_tab("tab-grants", "[dim]No grants.[/dim]")
+            return
+
+        lines: list[str] = []
+
+        # Dynamic column widths
+        max_user_len = max(len(f"{g.user}@{g.host}") for g in grs)
+        user_w = max(max_user_len + 2, 20)
+        level_w = 8  # "GLOBAL" is longest at 6 + padding
+
+        # Header
+        lines.append(
+            f"[bold]{'User':<{user_w}}{'Level':<{level_w}}Privileges[/bold]"
+        )
+        lines.append(
+            f"{'─' * (user_w - 1)} {'─' * (level_w - 1)} {'─' * 40}"
+        )
+
+        # Rows
+        for g in grs:
+            user_display = f"{g.user}@{g.host}"
+            level = g.grant_level
+            privs = g.privileges.upper() if g.privileges else ""
+            lines.append(f"{user_display:<{user_w}}[dim]{level:<{level_w}}[/dim]{privs}")
+
+        self._update_tab("tab-grants", "\n".join(lines))
+
     def _render_ddl_tab(self) -> None:
         """Render DDL from cached data."""
         if self._table_ddl:
@@ -754,7 +800,7 @@ class _TableMetadataTabs(Vertical):
             with TabPane("Triggers", id="tab-triggers"):
                 yield Static("", classes="tab-content")
             with TabPane("Grants", id="tab-grants"):
-                yield Static("[dim]Not yet implemented.[/dim]", classes="tab-content")
+                yield Static("", classes="tab-content")
             with TabPane("DDL", id="tab-ddl"):
                 yield Static("", classes="tab-content")
 

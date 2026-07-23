@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from mydba_tui.services.browser import (
     ColumnInfo,
     ForeignKeyInfo,
+    GrantInfo,
     IndexInfo,
     IndexSizeInfo,
     ObjectCounts,
@@ -14,6 +15,7 @@ from mydba_tui.services.browser import (
     get_index_sizes,
     get_table_fk_incoming,
     get_table_fk_outgoing,
+    get_table_grants,
     get_table_partitions,
     get_table_triggers,
 )
@@ -393,5 +395,82 @@ def test_get_table_partitions_empty(mock_load_sql: MagicMock) -> None:
     mock_conn.cursor.return_value = mock_cursor
 
     result = get_table_partitions(mock_conn, "mydb", "simple_table")
+
+    assert result == []
+
+
+def test_grant_info_defaults() -> None:
+    """GrantInfo should have empty defaults."""
+    g = GrantInfo()
+    assert g.user == ""
+    assert g.host == ""
+    assert g.grant_level == ""
+    assert g.privileges == ""
+
+
+def test_grant_info_with_values() -> None:
+    """GrantInfo should hold provided values."""
+    g = GrantInfo(
+        user="app_user", host="10.0.0.%", grant_level="SCHEMA",
+        privileges="Select,Insert,Update",
+    )
+    assert g.user == "app_user"
+    assert g.host == "10.0.0.%"
+    assert g.grant_level == "SCHEMA"
+    assert g.privileges == "Select,Insert,Update"
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_grants_returns_list(mock_load_sql: MagicMock) -> None:
+    """get_table_grants should return a list of GrantInfo."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("admin", "localhost", "GLOBAL", "SELECT,INSERT,UPDATE,DELETE"),
+        ("reader", "%", "SCHEMA", "SELECT"),
+        ("app", "%", "TABLE", "Select,Insert"),
+    ]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_grants(mock_conn, "mydb", "orders")
+
+    assert len(result) == 3
+    assert result[0].user == "admin"
+    assert result[0].grant_level == "GLOBAL"
+    assert result[0].privileges == "SELECT,INSERT,UPDATE,DELETE"
+    assert result[1].grant_level == "SCHEMA"
+    assert result[2].grant_level == "TABLE"
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_grants_returns_empty_on_error(mock_load_sql: MagicMock) -> None:
+    """get_table_grants should return empty list on privilege error."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = MagicMock(
+        execute=MagicMock(side_effect=Exception("Access denied"))
+    )
+
+    result = get_table_grants(mock_conn, "mydb", "orders")
+
+    assert result == []
+
+
+@patch("mydba_tui.services.browser.load_sql")
+def test_get_table_grants_empty(mock_load_sql: MagicMock) -> None:
+    """get_table_grants should return empty list when no grants exist."""
+    mock_load_sql.return_value = "SELECT ..."
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = []
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
+    result = get_table_grants(mock_conn, "mydb", "no_grants_table")
 
     assert result == []

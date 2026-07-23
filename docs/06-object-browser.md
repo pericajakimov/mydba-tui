@@ -290,30 +290,19 @@ Syntax highlighting for the body will be added in a future iteration.
 
 # Grants
 
-Displays only the privileges that actually exist for the selected object.
+Displays the effective privileges on the selected table by combining all grant levels:
 
-Example:
+- **GLOBAL** — privileges from `mysql.user` (apply to all tables)
+- **SCHEMA** — privileges from `mysql.db` (apply to all tables in the schema)
+- **TABLE** — privileges from `mysql.tables_priv` (specific to this table)
+- **COLUMN** — privileges from `mysql.columns_priv` (specific columns on this table)
 
-```
-user1
+Displayed in tabular format with User, Level, and Privileges columns.
 
-    SELECT
+View-specific privileges (`CREATE VIEW`, `SHOW VIEW`) are excluded from the table context.
+Empty table-level entries (created by column-only grants) are filtered out.
 
-user2
-
-    ALL
-
-user3
-
-    SELECT
-    INSERT
-    UPDATE
-    DELETE
-```
-
-The goal is to provide an immediate understanding of object access without reading multiple `SHOW GRANTS` statements.
-
-Status: Not yet implemented.
+The goal is to provide an immediate understanding of who can access this table and through which privilege level.
 
 ---
 

@@ -115,6 +115,18 @@ def test_load_table_partitions_sql() -> None:
     assert "{table}" in sql
 
 
+def test_load_table_grants_sql() -> None:
+    """Should load the table_grants SQL file."""
+    sql = load_sql("browser/table_grants.sql")
+    assert "table_priv" in sql
+    assert "tables_priv" in sql
+    assert "mysql.user" in sql
+    assert "mysql.db" in sql
+    assert "columns_priv" in sql
+    assert "{schema}" in sql
+    assert "{table}" in sql
+
+
 def test_load_nonexistent_file() -> None:
     """Should raise FileNotFoundError for missing SQL files."""
     with pytest.raises(FileNotFoundError):

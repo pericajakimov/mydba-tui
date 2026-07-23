@@ -313,6 +313,23 @@ class PartitionInfo:
     index_size: int = 0
 
 
+@dataclass(slots=True)
+class GrantInfo:
+    """Table-level grant information.
+
+    Attributes:
+        user: MySQL user name.
+        host: Host pattern.
+        grant_level: Privilege source (GLOBAL, SCHEMA, TABLE).
+        privileges: Comma-separated privilege list.
+    """
+
+    user: str = ""
+    host: str = ""
+    grant_level: str = ""
+    privileges: str = ""
+
+
 def get_table_info(
     connection: MySQLConnectionAbstract | PooledMySQLConnection,
     schema: str,
@@ -636,6 +653,52 @@ def get_table_partitions(
             row_count=int(row[5] or 0),  # type: ignore[arg-type,index]
             data_size=int(row[6] or 0),  # type: ignore[arg-type,index]
             index_size=int(row[7] or 0),  # type: ignore[arg-type,index]
+        )
+        for row in rows
+    ]
+
+
+def get_table_grants(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    table: str,
+) -> list[GrantInfo]:
+    """Get effective privileges on a table from global, schema, and table levels.
+
+    Combines mysql.user (global), mysql.db (schema), and mysql.tables_priv
+    (table) to show all users who can access this table and how.
+
+    Returns an empty list if the user lacks SELECT on the mysql grant tables
+    or no grants exist for the table.
+
+    Args:
+        connection: Active MySQL connection.
+        schema: Schema name.
+        table: Table name.
+
+    Returns:
+        List of GrantInfo for each user/host/level with privileges on the table.
+    """
+    sql_template = load_sql("browser/table_grants.sql")
+    sql = sql_template.replace("{schema}", schema).replace("{table}", table)
+    start = time.perf_counter()
+    try:
+        cursor = connection.cursor(buffered=True)
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+        cursor.close()
+        duration = time.perf_counter() - start
+        log_sql(sql, duration, "browser.table_grants")
+    except Exception:
+        # Privilege denied — degrade gracefully
+        return []
+
+    return [
+        GrantInfo(
+            user=str(row[0] or ""),  # type: ignore[index]
+            host=str(row[1] or ""),  # type: ignore[index]
+            grant_level=str(row[2] or ""),  # type: ignore[index]
+            privileges=str(row[3] or ""),  # type: ignore[index]
         )
         for row in rows
     ]

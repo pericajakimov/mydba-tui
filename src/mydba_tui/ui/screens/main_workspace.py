@@ -14,7 +14,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Static, TabbedContent, TabPane, Tree
+from textual.widgets import Button, Footer, Header, Static, TabbedContent, TabPane, TextArea, Tree
 from textual.widgets.tree import TreeNode
 
 from mydba_tui.ui.widgets import StatusBar
@@ -943,12 +943,12 @@ class MainWorkspaceScreen(Screen[None]):
         self._update_tab("tab-deps", "\n".join(lines))
 
     def _render_ddl_tab(self) -> None:
-        """Render DDL from cached data."""
+        """Render DDL from cached data with MySQL syntax highlighting."""
         ddl = self._table_ddl
-        if ddl:
-            self._update_tab("tab-ddl", ddl)
-        else:
+        if not ddl:
             self._update_tab("tab-ddl", "[dim]No DDL available.[/dim]")
+            return
+        self._update_tab_sql("tab-ddl", ddl)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sample data button clicks."""
@@ -1026,6 +1026,64 @@ class MainWorkspaceScreen(Screen[None]):
             scroll = VerticalScroll(Static(content, classes="tab-content"))
             scroll.styles.height = "100%"
             pane.mount(scroll)
+        except Exception:
+            pass
+
+    def _update_tab_sql(self, tab_id: str, sql_content: str) -> None:
+        """Update a tab pane with syntax-highlighted SQL using custom highlighter."""
+        from mydba_tui.ui.mysql_highlight import highlight_mysql
+
+        try:
+            pane = self.query_one(f"#{tab_id}", TabPane)
+            pane.remove_children()
+            highlighted = highlight_mysql(sql_content)
+            widget = Static(highlighted, classes="tab-content")
+            widget.styles.overflow_x = "auto"
+            scroll = VerticalScroll(widget)
+            scroll.styles.height = "100%"
+            pane.mount(scroll)
+        except Exception:
+            pass
+
+    def _update_tab_plain_sql(self, tab_id: str, sql_content: str) -> None:
+        """Update a tab with SQL in a TextArea (no highlighting, but selectable)."""
+        from mydba_tui.ui.sql_theme import SQL_THEME, SQL_THEME_NAME
+
+        try:
+            pane = self.query_one(f"#{tab_id}", TabPane)
+            pane.remove_children()
+            editor = TextArea(
+                sql_content,
+                read_only=True,
+                show_line_numbers=True,
+                soft_wrap=False,
+            )
+            editor.register_theme(SQL_THEME)
+            editor.theme = SQL_THEME_NAME
+            editor.styles.height = "100%"
+            pane.mount(editor)
+        except Exception:
+            pass
+
+    def _update_tab_with_body(
+        self, tab_id: str, metadata: str, body: str
+    ) -> None:
+        """Update a tab with metadata (Rich markup) + SQL body (highlighted)."""
+        from mydba_tui.ui.mysql_highlight import highlight_mysql
+
+        try:
+            pane = self.query_one(f"#{tab_id}", TabPane)
+            pane.remove_children()
+
+            # Metadata section
+            pane.mount(Static(metadata, classes="tab-content"))
+
+            # SQL body section (custom MySQL highlighter)
+            if body.strip():
+                highlighted = highlight_mysql(body)
+                body_widget = Static(highlighted, classes="tab-content")
+                body_widget.styles.overflow_x = "auto"
+                pane.mount(body_widget)
         except Exception:
             pass
 
@@ -1117,13 +1175,11 @@ class MainWorkspaceScreen(Screen[None]):
         lines.append(f"     [dim]Collation:[/dim] {info.collation}")
 
         if info.definition:
-            lines.append("")
-            lines.append("[bold]Body:[/bold]")
-            lines.append("")
-            for body_line in info.definition.splitlines():
-                lines.append(f"  {body_line}")
-
-        self._update_tab("tab-general", "\n".join(lines))
+            self._update_tab_with_body(
+                "tab-general", "\n".join(lines), info.definition
+            )
+        else:
+            self._update_tab("tab-general", "\n".join(lines))
 
     # --- Routine (Procedure/Function) metadata loading and rendering ---
 
@@ -1177,13 +1233,11 @@ class MainWorkspaceScreen(Screen[None]):
             lines.append(f"       [dim]Comment:[/dim] {info.comment}")
 
         if info.definition:
-            lines.append("")
-            lines.append("[bold]Body:[/bold]")
-            lines.append("")
-            for body_line in info.definition.splitlines():
-                lines.append(f"  {body_line}")
-
-        self._update_tab("tab-general", "\n".join(lines))
+            self._update_tab_with_body(
+                "tab-general", "\n".join(lines), info.definition
+            )
+        else:
+            self._update_tab("tab-general", "\n".join(lines))
 
     def _render_params_tab(self) -> None:
         """Render parameters for a procedure or function."""
@@ -1269,13 +1323,11 @@ class MainWorkspaceScreen(Screen[None]):
         lines.append(f"  [dim]Action Order:[/dim] {info.action_order}")
         lines.append(f"       [dim]Definer:[/dim] {info.definer}")
         lines.append(f"       [dim]Created:[/dim] {info.created}")
-        lines.append("")
-        lines.append("[bold]Body:[/bold]")
-        lines.append("")
-        for body_line in info.body.splitlines():
-            lines.append(f"  {body_line}")
 
-        self._update_tab("tab-general", "\n".join(lines))
+        if info.body:
+            self._update_tab_with_body("tab-general", "\n".join(lines), info.body)
+        else:
+            self._update_tab("tab-general", "\n".join(lines))
 
     # --- Event metadata loading and rendering ---
 
@@ -1327,13 +1379,13 @@ class MainWorkspaceScreen(Screen[None]):
         lines.append(f"      [dim]Modified:[/dim] {info.last_altered}")
         if info.comment:
             lines.append(f"       [dim]Comment:[/dim] {info.comment}")
-        lines.append("")
-        lines.append("[bold]Body:[/bold]")
-        lines.append("")
-        for body_line in info.definition.splitlines():
-            lines.append(f"  {body_line}")
 
-        self._update_tab("tab-general", "\n".join(lines))
+        if info.definition:
+            self._update_tab_with_body(
+                "tab-general", "\n".join(lines), info.definition
+            )
+        else:
+            self._update_tab("tab-general", "\n".join(lines))
 
     # --- Shared DDL loader ---
 

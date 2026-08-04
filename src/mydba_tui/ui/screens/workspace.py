@@ -125,7 +125,6 @@ class WorkspaceScreen(Screen[None]):
             yield TextArea.code_editor(
                 "",
                 language="sql",
-                theme="monokai",
                 id="sql-editor",
             )
             yield ScrollableContainer(
@@ -140,9 +139,14 @@ class WorkspaceScreen(Screen[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Focus the editor on mount."""
+        """Focus the editor on mount and apply custom SQL theme."""
+        from mydba_tui.ui.sql_theme import SQL_THEME, SQL_THEME_NAME
+
         self._sync_status_bar()
-        self.query_one("#sql-editor", TextArea).focus()
+        editor = self.query_one("#sql-editor", TextArea)
+        editor.register_theme(SQL_THEME)
+        editor.theme = SQL_THEME_NAME
+        editor.focus()
 
     def on_screen_resume(self) -> None:
         """Update status bar when returning to this screen."""

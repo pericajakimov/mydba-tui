@@ -15,11 +15,11 @@ DEFAULT_LOG_LEVEL = "WARNING"
 DEFAULT_SQL_LOG_ENABLED = True
 """Whether SQL logging is enabled by default."""
 
-DEFAULT_PAGE_SIZE = 100
-"""Default number of rows displayed in result sets."""
-
 DEFAULT_REFRESH_INTERVAL = 3
 """Default monitoring refresh interval in seconds."""
 
 DEFAULT_EXPORT_FORMAT = "csv"
 """Default export format."""
+
+DEFAULT_RESULT_FORMAT = "mysql"
+"""Default result table format: 'mysql' (bordered) or 'simple' (plain)."""

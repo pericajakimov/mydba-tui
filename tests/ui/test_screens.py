@@ -26,6 +26,8 @@ def test_main_workspace_has_bindings() -> None:
     binding_keys = [b.key for b in screen.BINDINGS]
 
     assert "c" in binding_keys
+    assert "w" in binding_keys
+    assert "r" in binding_keys
     assert "f10" in binding_keys
 
 

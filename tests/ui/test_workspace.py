@@ -14,7 +14,10 @@ def test_workspace_has_bindings() -> None:
     assert "ctrl+s" in binding_keys
     assert "ctrl+o" in binding_keys
     assert "ctrl+l" in binding_keys
+    assert "ctrl+r" in binding_keys
+    assert "ctrl+shift+s" in binding_keys
     assert "f6" in binding_keys
+    assert "f10" in binding_keys
     assert "escape" in binding_keys
 
 

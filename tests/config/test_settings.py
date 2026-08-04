@@ -12,9 +12,9 @@ def test_settings_defaults() -> None:
     assert settings.theme == "textual-dark"
     assert settings.log_level == "WARNING"
     assert settings.sql_log_enabled is True
-    assert settings.page_size == 100
     assert settings.refresh_interval == 3
     assert settings.export_format == "csv"
+    assert settings.result_format == "mysql"
 
 
 def test_load_settings_creates_file_on_first_run(tmp_path: Path) -> None:
@@ -35,9 +35,9 @@ def test_load_settings_reads_existing_file(tmp_path: Path) -> None:
         "theme: nord\n"
         "log_level: DEBUG\n"
         "sql_log_enabled: false\n"
-        "page_size: 50\n"
         "refresh_interval: 5\n"
-        "export_format: tsv\n",
+        "export_format: tsv\n"
+        "result_format: simple\n",
         encoding="utf-8",
     )
 
@@ -46,9 +46,9 @@ def test_load_settings_reads_existing_file(tmp_path: Path) -> None:
     assert settings.theme == "nord"
     assert settings.log_level == "DEBUG"
     assert settings.sql_log_enabled is False
-    assert settings.page_size == 50
     assert settings.refresh_interval == 5
     assert settings.export_format == "tsv"
+    assert settings.result_format == "simple"
 
 
 def test_load_settings_uses_defaults_for_missing_keys(tmp_path: Path) -> None:
@@ -60,7 +60,7 @@ def test_load_settings_uses_defaults_for_missing_keys(tmp_path: Path) -> None:
 
     assert settings.theme == "custom"
     assert settings.log_level == "WARNING"
-    assert settings.page_size == 100
+    assert settings.result_format == "mysql"
 
 
 def test_load_settings_handles_empty_file(tmp_path: Path) -> None:
@@ -77,13 +77,13 @@ def test_load_settings_handles_empty_file(tmp_path: Path) -> None:
 def test_save_settings_writes_yaml(tmp_path: Path) -> None:
     """save_settings should write a valid YAML file."""
     settings_path = tmp_path / "settings.yaml"
-    settings = Settings(theme="monokai", page_size=200)
+    settings = Settings(theme="monokai", result_format="simple")
 
     save_settings(settings, settings_path)
 
     content = settings_path.read_text(encoding="utf-8")
     assert "theme: monokai" in content
-    assert "page_size: 200" in content
+    assert "result_format: simple" in content
 
 
 def test_save_and_load_roundtrip(tmp_path: Path) -> None:
@@ -93,9 +93,9 @@ def test_save_and_load_roundtrip(tmp_path: Path) -> None:
         theme="dark",
         log_level="DEBUG",
         sql_log_enabled=False,
-        page_size=25,
         refresh_interval=10,
         export_format="jsonl",
+        result_format="simple",
     )
 
     save_settings(original, settings_path)
@@ -104,6 +104,6 @@ def test_save_and_load_roundtrip(tmp_path: Path) -> None:
     assert loaded.theme == original.theme
     assert loaded.log_level == original.log_level
     assert loaded.sql_log_enabled == original.sql_log_enabled
-    assert loaded.page_size == original.page_size
     assert loaded.refresh_interval == original.refresh_interval
     assert loaded.export_format == original.export_format
+    assert loaded.result_format == original.result_format

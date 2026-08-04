@@ -25,6 +25,7 @@ class MainWorkspaceScreen(Screen[None]):
 
     BINDINGS = [
         Binding("c", "open_profiles", "Connections", key_display="C"),
+        Binding("w", "open_workspace", "SQL Workspace", key_display="W"),
         Binding("r", "refresh", "Refresh", key_display="R"),
         Binding("f6", "switch_focus", "Switch Panel", key_display="F6"),
         Binding("f10", "quit", "Exit", key_display="F10"),
@@ -1043,6 +1044,10 @@ class MainWorkspaceScreen(Screen[None]):
     def action_open_profiles(self) -> None:
         """Navigate to Connection Profiles."""
         self.app.push_screen("profiles")
+
+    def action_open_workspace(self) -> None:
+        """Navigate to SQL Workspace."""
+        self.app.push_screen("workspace")
 
     def action_refresh(self) -> None:
         """Rebuild the dependency graph without collapsing the object tree."""

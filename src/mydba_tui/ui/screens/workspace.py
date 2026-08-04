@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from rich.markup import escape as rich_escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
@@ -404,7 +405,7 @@ class WorkspaceScreen(Screen[None]):
         # Build the block
         lines: list[str] = []
         lines.append(f"[bold]── {ts} ──[/bold]")
-        lines.append(f"[dim]{sql};[/dim]")
+        lines.append(f"[dim]{rich_escape(sql)};[/dim]")
         lines.append("")
         lines.append(f"[bold]{summary}[/bold]")
 
@@ -415,14 +416,14 @@ class WorkspaceScreen(Screen[None]):
             max_name_len = max(len(name) for name in col_names)
             for row_num, row in enumerate(rows, 1):
                 lines.append(
-                    f"[bold]{'*' * 27} {row_num}. row {'*' * 27}[/bold]"
+                    f"{'*' * 27} {row_num}. row {'*' * 27}"
                 )
                 for i, val in enumerate(row):
                     name = col_names[i] if i < len(col_names) else f"col{i}"
                     if val is None:
-                        val_str = "[dim]NULL[/dim]"
+                        val_str = "NULL"
                     else:
-                        val_str = str(val)
+                        val_str = _format_cell(val)
                     lines.append(f"{name:>{max_name_len}}: {val_str}")
         else:
             # Tabular output — full width for horizontal scrolling
@@ -431,9 +432,7 @@ class WorkspaceScreen(Screen[None]):
             for row in rows:
                 str_row = []
                 for i, val in enumerate(row):
-                    s = "NULL" if val is None else str(val)
-                    if len(s) > 200:
-                        s = s[:200] + "..."
+                    s = _format_cell(val)
                     str_row.append(s)
                     if i < len(col_widths):
                         col_widths[i] = max(col_widths[i], len(s))
@@ -443,7 +442,7 @@ class WorkspaceScreen(Screen[None]):
             hdr = "  ".join(
                 f"{name:<{col_widths[i]}}" for i, name in enumerate(col_names)
             )
-            lines.append(f"[bold]{hdr}[/bold]")
+            lines.append(f"{hdr}")
             lines.append(
                 "  ".join("─" * col_widths[i] for i in range(len(col_names)))
             )
@@ -453,17 +452,30 @@ class WorkspaceScreen(Screen[None]):
                 parts = []
                 for i, val in enumerate(str_row):
                     w = col_widths[i] if i < len(col_widths) else len(val)
-                    if val == "NULL":
-                        parts.append(f"[dim]{val:<{w}}[/dim]")
-                    else:
-                        parts.append(f"{val:<{w}}")
+                    padded = f"{val:<{w}}"
+                    parts.append(padded)
                 lines.append("  ".join(parts))
 
         lines.append("")
 
-        result_widget = Static("\n".join(lines), classes="result-block")
-        result_widget.styles.overflow_x = "auto"
-        panel.mount(result_widget)
+        # Split into header (with markup) and data (without markup)
+        # Find the split point: after the summary line
+        header_end = 4  # timestamp, sql, blank, summary
+        header_lines = lines[:header_end]
+        data_lines = lines[header_end:]
+
+        header_widget = Static(
+            "\n".join(header_lines), classes="result-block"
+        )
+        panel.mount(header_widget)
+
+        if data_lines:
+            data_widget = Static(
+                "\n".join(data_lines), classes="result-block", markup=False
+            )
+            data_widget.styles.overflow_x = "auto"
+            panel.mount(data_widget)
+
         panel.scroll_end()
 
         # Log to session file (with result data)
@@ -525,7 +537,7 @@ class WorkspaceScreen(Screen[None]):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         content = (
             f"[bold]── {ts} ──[/bold]\n"
-            f"[dim]{sql};[/dim]\n\n"
+            f"[dim]{rich_escape(sql)};[/dim]\n\n"
             f"[bold]{message} ({duration:.3f}s)[/bold]\n"
         )
         panel.mount(Static(content, classes="result-block"))
@@ -539,9 +551,11 @@ class WorkspaceScreen(Screen[None]):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lines: list[str] = [f"[bold]── {ts} ──[/bold]"]
         if sql:
-            lines.append(f"[dim]{sql};[/dim]")
+            lines.append(f"[dim]{rich_escape(sql)};[/dim]")
             lines.append("")
-        lines.append(f"[bold red]ERROR:[/bold red] [red]{error}[/red]")
+        lines.append(
+            f"[bold red]ERROR:[/bold red] [red]{rich_escape(error)}[/red]"
+        )
         lines.append("")
 
         panel.mount(Static("\n".join(lines), classes="result-block"))
@@ -631,6 +645,20 @@ class WorkspaceScreen(Screen[None]):
         """Exit workspace and clean up session log if not saved."""
         self._cleanup_session_log()
         self.app.pop_screen()
+
+
+def _format_cell(val: Any) -> str:
+    """Format a cell value for display, handling binary data."""
+    if val is None:
+        return "NULL"
+    if isinstance(val, (bytes, bytearray)):
+        if len(val) > 16:
+            return "<binary>"
+        return "0x" + val.hex().upper()
+    s = str(val)
+    if len(s) > 200:
+        s = s[:200] + "..."
+    return s
 
 
 class _FilePromptScreen(Screen[None]):

@@ -152,6 +152,67 @@ def test_parse_references_multiple_schemas() -> None:
     assert "reporting.summary" in refs
 
 
+def test_parse_references_begin_end_block() -> None:
+    """Should extract tables from procedure bodies with BEGIN/END."""
+    sql = "BEGIN\nINSERT INTO audit_log (a) VALUES (1);\nDELETE FROM orders WHERE 1=1;\nEND"
+    refs = _parse_references(sql, "app")
+    assert "app.audit_log" in refs
+    assert "app.orders" in refs
+
+
+def test_parse_references_if_then() -> None:
+    """Should extract tables inside IF/THEN blocks."""
+    sql = "BEGIN\nIF x > 0 THEN\nINSERT INTO audit_log (a) VALUES (1);\nEND IF;\nEND"
+    refs = _parse_references(sql, "app")
+    assert "app.audit_log" in refs
+
+
+def test_parse_references_call() -> None:
+    """Should extract procedure names from CALL statements."""
+    sql = "BEGIN\nCALL archive_old_orders(90);\nCALL other_schema.cleanup();\nEND"
+    refs = _parse_references(sql, "app")
+    assert "app.archive_old_orders" in refs
+    assert "other_schema.cleanup" in refs
+
+
+def test_parse_references_function_call() -> None:
+    """Should extract function calls from expressions."""
+    sql = "BEGIN\nIF get_order_count(5) > 10 THEN\nSELECT 1;\nEND IF;\nEND"
+    refs = _parse_references(sql, "app")
+    assert "app.get_order_count" in refs
+
+
+def test_parse_references_nested_block() -> None:
+    """Should extract tables from nested BEGIN/END blocks with cursors."""
+    sql = (
+        "BEGIN\n"
+        "BEGIN\n"
+        "DECLARE cur CURSOR FOR SELECT id FROM products;\n"
+        "UPDATE products SET stock = 0 WHERE id = 1;\n"
+        "END;\n"
+        "INSERT INTO audit_log (a) VALUES (1);\n"
+        "END"
+    )
+    refs = _parse_references(sql, "app")
+    assert "app.products" in refs
+    assert "app.audit_log" in refs
+
+
+def test_parse_references_update_and_insert() -> None:
+    """Should extract tables from UPDATE followed by INSERT."""
+    sql = (
+        "BEGIN\n"
+        "IF 1 = 1 THEN\n"
+        "UPDATE orders SET status = 'done' WHERE id = 1;\n"
+        "INSERT INTO order_archive (id) VALUES (1);\n"
+        "END IF;\n"
+        "END"
+    )
+    refs = _parse_references(sql, "app")
+    assert "app.orders" in refs
+    assert "app.order_archive" in refs
+
+
 # --- build_dependency_graph ---
 
 

@@ -92,6 +92,14 @@ The parser correctly handles:
 - INSERT ... SELECT
 - UPDATE
 - DELETE
+- BEGIN/END blocks (procedure, trigger, event bodies)
+- Nested BEGIN/END (handler blocks, nested cursor blocks)
+- IF/ELSEIF/ELSE/END IF flow control
+- WHILE/LOOP/REPEAT control flow
+- CASE/WHEN/END CASE
+- DECLARE CURSOR FOR (extracts the SELECT inside)
+- CALL statements (procedure invocations)
+- Function calls in expressions (user-defined functions)
 
 The parser ignores:
 
@@ -99,6 +107,10 @@ The parser ignores:
 - String literals
 - Aliases
 - Formatting
+- MySQL built-in functions (CONCAT, NOW, COUNT, etc.)
+- Variable declarations (DECLARE var TYPE)
+- SET variable assignments
+- OPEN/CLOSE/FETCH cursor operations
 
 ---
 

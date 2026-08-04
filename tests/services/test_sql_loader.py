@@ -127,6 +127,53 @@ def test_load_table_grants_sql() -> None:
     assert "{table}" in sql
 
 
+def test_load_view_info_sql() -> None:
+    """Should load the view_info SQL file."""
+    sql = load_sql("browser/view_info.sql")
+    assert "view_definition" in sql
+    assert "is_updatable" in sql
+    assert "{schema}" in sql
+    assert "{view}" in sql
+
+
+def test_load_routine_info_sql() -> None:
+    """Should load the routine_info SQL file."""
+    sql = load_sql("browser/routine_info.sql")
+    assert "routine_definition" in sql
+    assert "is_deterministic" in sql
+    assert "{schema}" in sql
+    assert "{name}" in sql
+    assert "{routine_type}" in sql
+
+
+def test_load_routine_params_sql() -> None:
+    """Should load the routine_params SQL file."""
+    sql = load_sql("browser/routine_params.sql")
+    assert "parameter_mode" in sql
+    assert "parameter_name" in sql
+    assert "{schema}" in sql
+    assert "{name}" in sql
+
+
+def test_load_trigger_info_sql() -> None:
+    """Should load the trigger_info SQL file."""
+    sql = load_sql("browser/trigger_info.sql")
+    assert "trigger_name" in sql
+    assert "action_timing" in sql
+    assert "event_object_table" in sql
+    assert "{schema}" in sql
+    assert "{name}" in sql
+
+
+def test_load_event_info_sql() -> None:
+    """Should load the event_info SQL file."""
+    sql = load_sql("browser/event_info.sql")
+    assert "event_type" in sql
+    assert "event_definition" in sql
+    assert "{schema}" in sql
+    assert "{name}" in sql
+
+
 def test_load_nonexistent_file() -> None:
     """Should raise FileNotFoundError for missing SQL files."""
     with pytest.raises(FileNotFoundError):

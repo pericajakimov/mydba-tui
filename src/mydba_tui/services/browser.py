@@ -806,3 +806,335 @@ def _is_text_type(col_type: str) -> bool:
             "varchar", "char", "json", "enum", "set",
         )
     )
+
+
+# --- View metadata ---
+
+
+@dataclass(slots=True)
+class ViewInfo:
+    """General view information.
+
+    Attributes:
+        schema: Schema name.
+        name: View name.
+        definition: View SQL definition.
+        check_option: Check option (NONE, LOCAL, CASCADED).
+        is_updatable: Whether the view is updatable (YES/NO).
+        definer: Definer account.
+        security_type: Security type (DEFINER/INVOKER).
+        charset: Character set client.
+        collation: Collation connection.
+    """
+
+    schema: str = ""
+    name: str = ""
+    definition: str = ""
+    check_option: str = "NONE"
+    is_updatable: str = ""
+    definer: str = ""
+    security_type: str = ""
+    charset: str = ""
+    collation: str = ""
+
+
+def get_view_info(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    view: str,
+) -> ViewInfo:
+    """Get general information about a view."""
+    sql_template = load_sql("browser/view_info.sql")
+    sql = sql_template.replace("{schema}", schema).replace("{view}", view)
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    row = cursor.fetchone()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, "browser.view_info")
+
+    if row is None:
+        return ViewInfo(schema=schema, name=view)
+
+    return ViewInfo(
+        schema=str(row[0] or ""),  # type: ignore[index]
+        name=str(row[1] or ""),  # type: ignore[index]
+        definition=str(row[2] or ""),  # type: ignore[index]
+        check_option=str(row[3] or "NONE"),  # type: ignore[index]
+        is_updatable=str(row[4] or ""),  # type: ignore[index]
+        definer=str(row[5] or ""),  # type: ignore[index]
+        security_type=str(row[6] or ""),  # type: ignore[index]
+        charset=str(row[7] or ""),  # type: ignore[index]
+        collation=str(row[8] or ""),  # type: ignore[index]
+    )
+
+
+# --- Routine (Procedure/Function) metadata ---
+
+
+@dataclass(slots=True)
+class RoutineInfo:
+    """General routine (procedure/function) information.
+
+    Attributes:
+        schema: Schema name.
+        name: Routine name.
+        routine_type: PROCEDURE or FUNCTION.
+        return_type: Return data type (functions only).
+        definition: Routine body.
+        is_deterministic: YES/NO.
+        data_access: SQL data access (CONTAINS SQL, READS SQL DATA, etc.).
+        security_type: DEFINER/INVOKER.
+        definer: Definer account.
+        created: Creation timestamp.
+        last_altered: Last modification timestamp.
+        comment: Routine comment.
+    """
+
+    schema: str = ""
+    name: str = ""
+    routine_type: str = ""
+    return_type: str = ""
+    definition: str = ""
+    is_deterministic: str = ""
+    data_access: str = ""
+    security_type: str = ""
+    definer: str = ""
+    created: str = ""
+    last_altered: str = ""
+    comment: str = ""
+
+
+@dataclass(slots=True)
+class RoutineParam:
+    """Parameter of a stored procedure or function.
+
+    Attributes:
+        ordinal: Ordinal position.
+        mode: Parameter mode (IN, OUT, INOUT, or empty for function return).
+        name: Parameter name.
+        data_type: Data type.
+    """
+
+    ordinal: int = 0
+    mode: str = ""
+    name: str = ""
+    data_type: str = ""
+
+
+def get_routine_info(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    name: str,
+    routine_type: str = "PROCEDURE",
+) -> RoutineInfo:
+    """Get general information about a stored procedure or function."""
+    sql_template = load_sql("browser/routine_info.sql")
+    sql = (
+        sql_template.replace("{schema}", schema)
+        .replace("{name}", name)
+        .replace("{routine_type}", routine_type)
+    )
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    row = cursor.fetchone()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, "browser.routine_info")
+
+    if row is None:
+        return RoutineInfo(schema=schema, name=name, routine_type=routine_type)
+
+    return RoutineInfo(
+        schema=str(row[0] or ""),  # type: ignore[index]
+        name=str(row[1] or ""),  # type: ignore[index]
+        routine_type=str(row[2] or ""),  # type: ignore[index]
+        return_type=str(row[3] or ""),  # type: ignore[index]
+        definition=str(row[4] or ""),  # type: ignore[index]
+        is_deterministic=str(row[5] or ""),  # type: ignore[index]
+        data_access=str(row[6] or ""),  # type: ignore[index]
+        security_type=str(row[7] or ""),  # type: ignore[index]
+        definer=str(row[8] or ""),  # type: ignore[index]
+        created=str(row[9] or ""),  # type: ignore[index]
+        last_altered=str(row[10] or ""),  # type: ignore[index]
+        comment=str(row[11] or ""),  # type: ignore[index]
+    )
+
+
+def get_routine_params(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    name: str,
+    routine_type: str = "PROCEDURE",
+) -> list[RoutineParam]:
+    """Get parameters for a stored procedure or function."""
+    sql_template = load_sql("browser/routine_params.sql")
+    sql = (
+        sql_template.replace("{schema}", schema)
+        .replace("{name}", name)
+        .replace("{routine_type}", routine_type)
+    )
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    rows = cursor.fetchall()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, "browser.routine_params")
+
+    return [
+        RoutineParam(
+            ordinal=int(row[0] or 0),  # type: ignore[arg-type,index]
+            mode=str(row[1] or ""),  # type: ignore[index]
+            name=str(row[2] or ""),  # type: ignore[index]
+            data_type=str(row[3] or ""),  # type: ignore[index]
+        )
+        for row in rows
+    ]
+
+
+# --- Trigger metadata (single trigger detail) ---
+
+
+@dataclass(slots=True)
+class TriggerDetailInfo:
+    """Detailed trigger information.
+
+    Attributes:
+        schema: Schema name.
+        name: Trigger name.
+        event: Event (INSERT, UPDATE, DELETE).
+        table_schema: Target table schema.
+        table_name: Target table name.
+        timing: Timing (BEFORE, AFTER).
+        body: Trigger body (action_statement).
+        action_order: Action order.
+        definer: Definer account.
+        created: Creation timestamp.
+    """
+
+    schema: str = ""
+    name: str = ""
+    event: str = ""
+    table_schema: str = ""
+    table_name: str = ""
+    timing: str = ""
+    body: str = ""
+    action_order: int = 0
+    definer: str = ""
+    created: str = ""
+
+
+def get_trigger_detail(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    name: str,
+) -> TriggerDetailInfo:
+    """Get detailed information about a single trigger."""
+    sql_template = load_sql("browser/trigger_info.sql")
+    sql = sql_template.replace("{schema}", schema).replace("{name}", name)
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    row = cursor.fetchone()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, "browser.trigger_detail")
+
+    if row is None:
+        return TriggerDetailInfo(schema=schema, name=name)
+
+    return TriggerDetailInfo(
+        schema=str(row[0] or ""),  # type: ignore[index]
+        name=str(row[1] or ""),  # type: ignore[index]
+        event=str(row[2] or ""),  # type: ignore[index]
+        table_schema=str(row[3] or ""),  # type: ignore[index]
+        table_name=str(row[4] or ""),  # type: ignore[index]
+        timing=str(row[5] or ""),  # type: ignore[index]
+        body=str(row[6] or ""),  # type: ignore[index]
+        action_order=int(row[7] or 0),  # type: ignore[arg-type,index]
+        definer=str(row[8] or ""),  # type: ignore[index]
+        created=str(row[9] or ""),  # type: ignore[index]
+    )
+
+
+# --- Event metadata ---
+
+
+@dataclass(slots=True)
+class EventInfo:
+    """Scheduled event information.
+
+    Attributes:
+        schema: Schema name.
+        name: Event name.
+        definer: Definer account.
+        event_type: ONE TIME or RECURRING.
+        execute_at: Execution time (one-time events).
+        interval_value: Interval value (recurring events).
+        interval_field: Interval unit (recurring events).
+        starts: Start time (recurring events).
+        ends: End time (recurring events).
+        status: ENABLED, DISABLED, or SLAVESIDE_DISABLED.
+        on_completion: PRESERVE or NOT PRESERVE.
+        created: Creation timestamp.
+        last_altered: Last modification timestamp.
+        definition: Event body.
+        comment: Event comment.
+    """
+
+    schema: str = ""
+    name: str = ""
+    definer: str = ""
+    event_type: str = ""
+    execute_at: str = ""
+    interval_value: str = ""
+    interval_field: str = ""
+    starts: str = ""
+    ends: str = ""
+    status: str = ""
+    on_completion: str = ""
+    created: str = ""
+    last_altered: str = ""
+    definition: str = ""
+    comment: str = ""
+
+
+def get_event_info(
+    connection: MySQLConnectionAbstract | PooledMySQLConnection,
+    schema: str,
+    name: str,
+) -> EventInfo:
+    """Get information about a scheduled event."""
+    sql_template = load_sql("browser/event_info.sql")
+    sql = sql_template.replace("{schema}", schema).replace("{name}", name)
+    start = time.perf_counter()
+    cursor = connection.cursor(buffered=True)
+    cursor.execute(sql)
+    row = cursor.fetchone()
+    cursor.close()
+    duration = time.perf_counter() - start
+    log_sql(sql, duration, "browser.event_info")
+
+    if row is None:
+        return EventInfo(schema=schema, name=name)
+
+    return EventInfo(
+        schema=str(row[0] or ""),  # type: ignore[index]
+        name=str(row[1] or ""),  # type: ignore[index]
+        definer=str(row[2] or ""),  # type: ignore[index]
+        event_type=str(row[3] or ""),  # type: ignore[index]
+        execute_at=str(row[4] or ""),  # type: ignore[index]
+        interval_value=str(row[5] or ""),  # type: ignore[index]
+        interval_field=str(row[6] or ""),  # type: ignore[index]
+        starts=str(row[7] or ""),  # type: ignore[index]
+        ends=str(row[8] or ""),  # type: ignore[index]
+        status=str(row[9] or ""),  # type: ignore[index]
+        on_completion=str(row[10] or ""),  # type: ignore[index]
+        created=str(row[11] or ""),  # type: ignore[index]
+        last_altered=str(row[12] or ""),  # type: ignore[index]
+        definition=str(row[13] or ""),  # type: ignore[index]
+        comment=str(row[14] or ""),  # type: ignore[index]
+    )

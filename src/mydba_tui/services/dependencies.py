@@ -298,10 +298,15 @@ def _enumerate_foreign_keys(
 
 
 def _parse_references(sql_definition: str, default_schema: str) -> list[str]:
-    """Parse SQL definition and extract fully-qualified table/view references.
+    """Parse SQL definition and extract fully-qualified object references.
 
     Uses sqlglot with MySQL dialect. Resolves unqualified names using
     the default_schema from the object's context.
+
+    Handles:
+    - BEGIN/END block stripping (procedures, triggers, events)
+    - CALL statements (extracted via regex since sqlglot can't parse them)
+    - Standard DML (SELECT, INSERT, UPDATE, DELETE)
 
     Args:
         sql_definition: SQL body of the object.
@@ -310,30 +315,137 @@ def _parse_references(sql_definition: str, default_schema: str) -> list[str]:
     Returns:
         List of fully-qualified references as "schema.name" strings.
     """
+    import re
+
     if not sql_definition or not sql_definition.strip():
         return []
 
-    try:
-        statements = sqlglot.parse(
-            sql_definition, dialect="mysql", error_level=sqlglot.ErrorLevel.IGNORE
-        )
-    except Exception:
-        return []
+    body = sql_definition.strip()
+
+    # Strip BEGIN/END wrapper — sqlglot misparses it as Transaction/End
+    body = re.sub(r"^\s*BEGIN\s+", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\s+END\s*$", "", body, flags=re.IGNORECASE)
 
     references: set[str] = set()
-    for stmt in statements:
-        if stmt is None:
+
+    # Extract CALL statements before stripping (sqlglot can't parse them)
+    for match in re.finditer(
+        r"\bCALL\s+(?:`?(\w+)`?\.)?`?(\w+)`?\s*\(", body, re.IGNORECASE
+    ):
+        call_schema = match.group(1) or default_schema
+        call_name = match.group(2)
+        references.add(f"{call_schema}.{call_name}")
+
+    # Extract function calls: word( — before IF stripping removes conditions
+    # MySQL built-in functions to ignore
+    _builtins = {
+        "concat", "concat_ws", "if", "ifnull", "nullif", "coalesce",
+        "now", "curdate", "curtime", "date_add", "date_sub", "datediff",
+        "year", "month", "day", "hour", "minute", "second",
+        "count", "sum", "avg", "min", "max", "group_concat",
+        "left", "right", "substring", "trim", "upper", "lower", "replace",
+        "length", "char_length", "abs", "ceil", "floor", "round", "mod",
+        "last_insert_id", "row_count", "found_rows",
+        "cast", "convert", "date_format", "str_to_date",
+        "isnull", "greatest", "least", "field", "find_in_set",
+        "hex", "unhex", "md5", "sha1", "sha2", "uuid",
+        "json_extract", "json_set", "json_replace", "json_remove",
+        "json_object", "json_array", "json_contains", "json_length",
+        "values", "default", "exists",
+    }
+    for match in re.finditer(
+        r"\b(?:`?(\w+)`?\.)?`?(\w+)`?\s*\(", body
+    ):
+        fn_schema = match.group(1)
+        fn_name = match.group(2)
+        if fn_name.lower() in _builtins:
             continue
-        for table in stmt.find_all(exp.Table):
-            name = table.name
-            if not name:
+        schema_resolved = fn_schema or default_schema
+        references.add(f"{schema_resolved}.{fn_name}")
+
+    # Strip MySQL procedural flow control that sqlglot cannot parse
+    # Remove IF/ELSEIF conditions (keep the body inside)
+    body = re.sub(r"\bIF\b\s+.+?\s+\bTHEN\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bELSEIF\b\s+.+?\s+\bTHEN\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bELSE\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bEND\s+IF\b", "", body, flags=re.IGNORECASE)
+    # Remove CASE/WHEN/END CASE control
+    body = re.sub(r"\bCASE\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bWHEN\b\s+.+?\s+\bTHEN\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bEND\s+CASE\b", "", body, flags=re.IGNORECASE)
+    # Remove LOOP/WHILE/REPEAT control
+    body = re.sub(r"\bWHILE\b\s+.+?\s+\bDO\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bEND\s+WHILE\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\b\w+\s*:\s*LOOP\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bLOOP\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bEND\s+LOOP\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bREPEAT\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bUNTIL\b\s+.+?\s+\bEND\s+REPEAT\b", "", body, flags=re.IGNORECASE)
+    # Remove LEAVE/ITERATE labels
+    body = re.sub(r"\bLEAVE\b\s+\w+", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bITERATE\b\s+\w+", "", body, flags=re.IGNORECASE)
+    # Remove OPEN/CLOSE/FETCH cursor statements
+    body = re.sub(r"\bOPEN\b\s+\w+", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bCLOSE\b\s+\w+", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bFETCH\b\s+\w+\s+INTO\b[^;]+", "", body, flags=re.IGNORECASE)
+    # Remove DECLARE for variables and handlers (NOT cursors — those have SQL)
+    body = re.sub(
+        r"\bDECLARE\b\s+\w+\s+(INT|TINYINT|SMALLINT|BIGINT|DECIMAL|FLOAT|DOUBLE|"
+        r"VARCHAR|CHAR|TEXT|DATE|DATETIME|TIMESTAMP|BOOLEAN|BLOB)\b[^;]*;",
+        "", body, flags=re.IGNORECASE,
+    )
+    body = re.sub(
+        r"\bDECLARE\b\s+(CONTINUE|EXIT)\s+HANDLER\b[^;]*;",
+        "", body, flags=re.IGNORECASE,
+    )
+    # Transform DECLARE cursor: extract the SELECT inside
+    body = re.sub(
+        r"\bDECLARE\b\s+\w+\s+CURSOR\s+FOR\s+",
+        "", body, flags=re.IGNORECASE,
+    )
+    # Remove standalone SET statements (variable assignments, not UPDATE ... SET)
+    body = re.sub(
+        r"^\s*SET\s+@?\w+\s*=[^;]+;", "", body,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    # Remove START TRANSACTION / COMMIT / ROLLBACK
+    body = re.sub(r"\bSTART\s+TRANSACTION\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bCOMMIT\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bROLLBACK\b", "", body, flags=re.IGNORECASE)
+    # Remove nested BEGIN/END (in handler blocks, nested blocks)
+    body = re.sub(r"\bBEGIN\b", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bEND\s*;", ";", body, flags=re.IGNORECASE)
+    # Remove SELECT ... INTO var (converts to plain SELECT)
+    body = re.sub(
+        r"\bINTO\s+(?:@\w+|v_\w+)(?:\s*,\s*(?:@\w+|v_\w+))*",
+        "", body, flags=re.IGNORECASE,
+    )
+
+    # Parse with sqlglot — try individual statements for resilience
+    # Split on semicolons and parse each one, so a failure in one
+    # statement doesn't prevent parsing the rest
+    statements_text = [s.strip() for s in body.split(";") if s.strip()]
+
+    for stmt_text in statements_text:
+        try:
+            parsed = sqlglot.parse(
+                stmt_text, dialect="mysql", error_level=sqlglot.ErrorLevel.IGNORE
+            )
+        except Exception:
+            continue
+
+        for stmt in parsed:
+            if stmt is None:
                 continue
-            # Skip aliases and subquery references
-            if name.upper() in ("DUAL",):
-                continue
-            schema = table.db or default_schema
-            qualified = f"{schema}.{name}"
-            references.add(qualified)
+            for table in stmt.find_all(exp.Table):
+                name = table.name
+                if not name:
+                    continue
+                if name.upper() in ("DUAL",):
+                    continue
+                schema = table.db or default_schema
+                qualified = f"{schema}.{name}"
+                references.add(qualified)
 
     return list(references)
 

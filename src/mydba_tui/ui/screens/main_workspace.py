@@ -311,11 +311,21 @@ class MainWorkspaceScreen(Screen[None]):
             self._selected_category = category
             if category == "tables":
                 self._show_table_tabs(schema, name)
+            elif category == "views":
+                self._show_view_tabs(schema, name)
+            elif category == "procedures":
+                self._show_routine_tabs(schema, name, "PROCEDURE")
+            elif category == "functions":
+                self._show_routine_tabs(schema, name, "FUNCTION")
+            elif category == "triggers":
+                self._show_trigger_tabs(schema, name)
+            elif category == "events":
+                self._show_event_tabs(schema, name)
             else:
                 self._show_placeholder(
                     f"[bold cyan]{schema}.{name}[/bold cyan]"
                     f" [dim]({category[:-1]})[/dim]\n\n"
-                    f"[dim]Metadata view for {category} coming soon.[/dim]"
+                    f"[dim]Metadata view not available.[/dim]"
                 )
 
     def _show_placeholder(self, text: str) -> None:
@@ -358,23 +368,7 @@ class MainWorkspaceScreen(Screen[None]):
             self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
             return
 
-        # Load DDL
-        import time
-
-        from mydba_tui.logging import log_sql
-
-        sql = f"SHOW CREATE TABLE `{schema}`.`{table}`"
-        start = time.perf_counter()
-        try:
-            cursor = conn_result.connection.cursor(buffered=True)
-            cursor.execute(sql)
-            row = cursor.fetchone()
-            cursor.close()
-            duration = time.perf_counter() - start
-            log_sql(sql, duration, "browser.ddl")
-            self._table_ddl = str(row[1]) if row and len(row) >= 2 else ""  # type: ignore[index]
-        except Exception:
-            self._table_ddl = ""
+        self._load_ddl(conn_result, f"SHOW CREATE TABLE `{schema}`.`{table}`")
 
         # Show tabs and render the first one
         content_panel = self.query_one("#content-panel", Vertical)
@@ -408,6 +402,8 @@ class MainWorkspaceScreen(Screen[None]):
             self._render_grants_tab()
         elif pane_id == "tab-deps":
             self._render_dependencies_tab()
+        elif pane_id == "tab-params":
+            self._render_params_tab()
         elif pane_id == "tab-sample":
             self._update_sample_results(
                 "[dim]Click a button above to load sample data.[/dim]"
@@ -416,7 +412,21 @@ class MainWorkspaceScreen(Screen[None]):
             self._render_ddl_tab()
 
     def _render_general_tab(self) -> None:
-        """Render general info from cached data."""
+        """Render general info from cached data — dispatches by object type."""
+        category = self._selected_category
+        if category == "tables":
+            self._render_table_general()
+        elif category == "views":
+            self._render_view_general()
+        elif category in ("procedures", "functions"):
+            self._render_routine_general()
+        elif category == "triggers":
+            self._render_trigger_general()
+        elif category == "events":
+            self._render_event_general()
+
+    def _render_table_general(self) -> None:
+        """Render general info for a table."""
         from mydba_tui.services.browser import TableInfo
 
         info = self._table_info
@@ -821,7 +831,18 @@ class MainWorkspaceScreen(Screen[None]):
 
         # Find this object in the graph
         current_ref: ObjectRef | None = None
-        for otype in (ObjectType.TABLE, ObjectType.VIEW):
+        category = self._selected_category
+        # Map category to possible ObjectTypes
+        type_candidates = {
+            "tables": [ObjectType.TABLE],
+            "views": [ObjectType.VIEW],
+            "procedures": [ObjectType.PROCEDURE],
+            "functions": [ObjectType.FUNCTION],
+            "triggers": [ObjectType.TRIGGER],
+            "events": [ObjectType.EVENT],
+        }.get(category, [ObjectType.TABLE, ObjectType.VIEW])
+
+        for otype in type_candidates:
             key = f"{otype.value}:{schema}.{table}"
             if key in graph.objects:
                 current_ref = graph.objects[key]
@@ -922,8 +943,9 @@ class MainWorkspaceScreen(Screen[None]):
 
     def _render_ddl_tab(self) -> None:
         """Render DDL from cached data."""
-        if self._table_ddl:
-            self._update_tab("tab-ddl", self._table_ddl)
+        ddl = self._table_ddl
+        if ddl:
+            self._update_tab("tab-ddl", ddl)
         else:
             self._update_tab("tab-ddl", "[dim]No DDL available.[/dim]")
 
@@ -1048,6 +1070,295 @@ class MainWorkspaceScreen(Screen[None]):
         except Exception as e:
             self.notify(f"Failed to build dependency graph: {e}", severity="error")
 
+    # --- View metadata loading and rendering ---
+
+    def _show_view_tabs(self, schema: str, name: str) -> None:
+        """Load view metadata and show tabbed view."""
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.services.browser import get_table_columns, get_view_info
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return
+
+        try:
+            self._table_info = get_view_info(conn_result.connection, schema, name)
+            self._table_columns = get_table_columns(conn_result.connection, schema, name)
+        except Exception as e:
+            self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
+            return
+
+        self._load_ddl(conn_result, f"SHOW CREATE VIEW `{schema}`.`{name}`", col=1)
+
+        content_panel = self.query_one("#content-panel", Vertical)
+        content_panel.remove_children()
+        content_panel.mount(_ViewMetadataTabs(schema, name))
+        self.call_after_refresh(self._render_general_tab)
+
+    def _render_view_general(self) -> None:
+        """Render general info for a view."""
+        from mydba_tui.services.browser import ViewInfo
+
+        info = self._table_info
+        if not isinstance(info, ViewInfo):
+            return
+
+        lines: list[str] = []
+        lines.append(f"       [dim]Definer:[/dim] {info.definer}")
+        lines.append(f"      [dim]Security:[/dim] {info.security_type}")
+        lines.append(f"    [dim]Updatable:[/dim] {info.is_updatable}")
+        lines.append(f" [dim]Check Option:[/dim] {info.check_option}")
+        lines.append(f"       [dim]Charset:[/dim] {info.charset}")
+        lines.append(f"     [dim]Collation:[/dim] {info.collation}")
+
+        if info.definition:
+            lines.append("")
+            lines.append("[bold]Body:[/bold]")
+            lines.append("")
+            for body_line in info.definition.splitlines():
+                lines.append(f"  {body_line}")
+
+        self._update_tab("tab-general", "\n".join(lines))
+
+    # --- Routine (Procedure/Function) metadata loading and rendering ---
+
+    def _show_routine_tabs(self, schema: str, name: str, routine_type: str) -> None:
+        """Load routine metadata and show tabbed view."""
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.services.browser import get_routine_info, get_routine_params
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return
+
+        try:
+            self._table_info = get_routine_info(
+                conn_result.connection, schema, name, routine_type
+            )
+            self._table_columns = get_routine_params(
+                conn_result.connection, schema, name, routine_type
+            )
+        except Exception as e:
+            self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
+            return
+
+        ddl_cmd = "PROCEDURE" if routine_type == "PROCEDURE" else "FUNCTION"
+        self._load_ddl(conn_result, f"SHOW CREATE {ddl_cmd} `{schema}`.`{name}`", col=2)
+
+        content_panel = self.query_one("#content-panel", Vertical)
+        content_panel.remove_children()
+        content_panel.mount(_RoutineMetadataTabs(schema, name, routine_type))
+        self.call_after_refresh(self._render_general_tab)
+
+    def _render_routine_general(self) -> None:
+        """Render general info for a procedure or function."""
+        from mydba_tui.services.browser import RoutineInfo
+
+        info = self._table_info
+        if not isinstance(info, RoutineInfo):
+            return
+
+        lines: list[str] = []
+        lines.append(f"          [dim]Type:[/dim] {info.routine_type}")
+        if info.return_type:
+            lines.append(f"       [dim]Returns:[/dim] {info.return_type}")
+        lines.append(f"       [dim]Definer:[/dim] {info.definer}")
+        lines.append(f"      [dim]Security:[/dim] {info.security_type}")
+        lines.append(f" [dim]Deterministic:[/dim] {info.is_deterministic}")
+        lines.append(f"   [dim]Data Access:[/dim] {info.data_access}")
+        lines.append(f"       [dim]Created:[/dim] {info.created}")
+        lines.append(f"      [dim]Modified:[/dim] {info.last_altered}")
+        if info.comment:
+            lines.append(f"       [dim]Comment:[/dim] {info.comment}")
+
+        if info.definition:
+            lines.append("")
+            lines.append("[bold]Body:[/bold]")
+            lines.append("")
+            for body_line in info.definition.splitlines():
+                lines.append(f"  {body_line}")
+
+        self._update_tab("tab-general", "\n".join(lines))
+
+    def _render_params_tab(self) -> None:
+        """Render parameters for a procedure or function."""
+        from mydba_tui.services.browser import RoutineParam
+
+        params = self._table_columns
+        if params is None:
+            return
+
+        if not params:
+            self._update_tab("tab-params", "[dim]No parameters.[/dim]")
+            return
+
+        prms = [p for p in params if isinstance(p, RoutineParam)]
+        if not prms:
+            self._update_tab("tab-params", "[dim]No parameters.[/dim]")
+            return
+
+        # Filter out ordinal 0 (function return type, not a real param)
+        prms = [p for p in prms if p.ordinal > 0]
+        if not prms:
+            self._update_tab("tab-params", "[dim]No parameters.[/dim]")
+            return
+
+        max_name = max(len(p.name) for p in prms)
+        name_w = max(max_name + 2, 15)
+        max_type = max(len(p.data_type) for p in prms)
+        type_w = max(max_type + 2, 15)
+
+        lines: list[str] = []
+        lines.append(
+            f"[bold]{'#':<4}{'Mode':<8}{'Name':<{name_w}}{'Type':<{type_w}}[/bold]"
+        )
+        lines.append(f"{'─' * 3} {'─' * 6} {'─' * (name_w - 1)} {'─' * (type_w - 1)}")
+
+        for p in prms:
+            mode = p.mode or ""
+            lines.append(
+                f"{p.ordinal:<4}{mode:<8}{p.name:<{name_w}}"
+                f"[dim]{p.data_type}[/dim]"
+            )
+
+        self._update_tab("tab-params", "\n".join(lines))
+
+    # --- Trigger metadata loading and rendering ---
+
+    def _show_trigger_tabs(self, schema: str, name: str) -> None:
+        """Load trigger metadata and show tabbed view."""
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.services.browser import get_trigger_detail
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return
+
+        try:
+            self._table_info = get_trigger_detail(conn_result.connection, schema, name)
+        except Exception as e:
+            self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
+            return
+
+        self._load_ddl(conn_result, f"SHOW CREATE TRIGGER `{schema}`.`{name}`", col=2)
+
+        content_panel = self.query_one("#content-panel", Vertical)
+        content_panel.remove_children()
+        content_panel.mount(_TriggerMetadataTabs(schema, name))
+        self.call_after_refresh(self._render_general_tab)
+
+    def _render_trigger_general(self) -> None:
+        """Render general info for a trigger."""
+        from mydba_tui.services.browser import TriggerDetailInfo
+
+        info = self._table_info
+        if not isinstance(info, TriggerDetailInfo):
+            return
+
+        lines: list[str] = []
+        lines.append(f"         [dim]Event:[/dim] {info.event}")
+        lines.append(f"        [dim]Timing:[/dim] {info.timing}")
+        lines.append(
+            f"         [dim]Table:[/dim] {info.table_schema}.{info.table_name}"
+        )
+        lines.append(f"  [dim]Action Order:[/dim] {info.action_order}")
+        lines.append(f"       [dim]Definer:[/dim] {info.definer}")
+        lines.append(f"       [dim]Created:[/dim] {info.created}")
+        lines.append("")
+        lines.append("[bold]Body:[/bold]")
+        lines.append("")
+        for body_line in info.body.splitlines():
+            lines.append(f"  {body_line}")
+
+        self._update_tab("tab-general", "\n".join(lines))
+
+    # --- Event metadata loading and rendering ---
+
+    def _show_event_tabs(self, schema: str, name: str) -> None:
+        """Load event metadata and show tabbed view."""
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.services.browser import get_event_info
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return
+
+        try:
+            self._table_info = get_event_info(conn_result.connection, schema, name)
+        except Exception as e:
+            self._show_placeholder(f"[red]Error loading metadata: {e}[/red]")
+            return
+
+        self._load_ddl(conn_result, f"SHOW CREATE EVENT `{schema}`.`{name}`", col=3)
+
+        content_panel = self.query_one("#content-panel", Vertical)
+        content_panel.remove_children()
+        content_panel.mount(_EventMetadataTabs(schema, name))
+        self.call_after_refresh(self._render_general_tab)
+
+    def _render_event_general(self) -> None:
+        """Render general info for an event."""
+        from mydba_tui.services.browser import EventInfo
+
+        info = self._table_info
+        if not isinstance(info, EventInfo):
+            return
+
+        lines: list[str] = []
+        lines.append(f"          [dim]Type:[/dim] {info.event_type}")
+        lines.append(f"       [dim]Definer:[/dim] {info.definer}")
+        lines.append(f"        [dim]Status:[/dim] {info.status}")
+        if info.event_type == "ONE TIME":
+            lines.append(f"    [dim]Execute At:[/dim] {info.execute_at}")
+        else:
+            interval = f"EVERY {info.interval_value} {info.interval_field}"
+            lines.append(f"      [dim]Schedule:[/dim] {interval}")
+            if info.starts:
+                lines.append(f"        [dim]Starts:[/dim] {info.starts}")
+            if info.ends:
+                lines.append(f"          [dim]Ends:[/dim] {info.ends}")
+        lines.append(f" [dim]On Completion:[/dim] {info.on_completion}")
+        lines.append(f"       [dim]Created:[/dim] {info.created}")
+        lines.append(f"      [dim]Modified:[/dim] {info.last_altered}")
+        if info.comment:
+            lines.append(f"       [dim]Comment:[/dim] {info.comment}")
+        lines.append("")
+        lines.append("[bold]Body:[/bold]")
+        lines.append("")
+        for body_line in info.definition.splitlines():
+            lines.append(f"  {body_line}")
+
+        self._update_tab("tab-general", "\n".join(lines))
+
+    # --- Shared DDL loader ---
+
+    def _load_ddl(self, conn_result: Any, sql: str, col: int = 1) -> None:
+        """Load DDL via SHOW CREATE and store in self._table_ddl.
+
+        Args:
+            conn_result: Connection result with .connection attribute.
+            sql: The SHOW CREATE ... SQL statement.
+            col: Column index (0-based) containing the DDL text.
+        """
+        import time
+
+        from mydba_tui.logging import log_sql
+
+        start = time.perf_counter()
+        try:
+            cursor = conn_result.connection.cursor(buffered=True)
+            cursor.execute(sql)
+            row = cursor.fetchone()
+            cursor.close()
+            duration = time.perf_counter() - start
+            log_sql(sql, duration, "browser.ddl")
+            if row and len(row) > col and row[col]:
+                self._table_ddl = str(row[col])
+            else:
+                self._table_ddl = ""
+        except Exception:
+            self._table_ddl = ""
+
     def action_quit(self) -> None:
         """Exit the application."""
         self.app.exit()
@@ -1064,7 +1375,8 @@ class _TableMetadataTabs(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            f"[bold cyan]{self._schema}.{self._table}[/bold cyan] [dim](table)[/dim]",
+            f"[yellow]{self._schema}[/yellow]"
+            f".[bold cyan]{self._table}[/bold cyan] [dim](table)[/dim]",
             id="object-header",
         )
         with TabbedContent(id="metadata-tabs"):
@@ -1094,6 +1406,108 @@ class _TableMetadataTabs(Vertical):
                 )
                 with VerticalScroll(id="sample-scroll"):
                     yield Static("", id="sample-results", classes="tab-content")
+
+
+class _ViewMetadataTabs(Vertical):
+    """Widget containing the tabbed metadata view for a view."""
+
+    def __init__(self, schema: str, name: str) -> None:
+        super().__init__()
+        self._schema = schema
+        self._name = name
+        self.styles.height = "1fr"
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"[yellow]{self._schema}[/yellow]"
+            f".[bold cyan]{self._name}[/bold cyan] [dim](view)[/dim]",
+            id="object-header",
+        )
+        with TabbedContent(id="metadata-tabs"):
+            with TabPane("General", id="tab-general"):
+                yield Static("Loading...", classes="tab-content")
+            with TabPane("Columns", id="tab-columns"):
+                yield Static("", classes="tab-content")
+            with TabPane("Dependencies", id="tab-deps"):
+                yield Static("", classes="tab-content")
+            with TabPane("DDL", id="tab-ddl"):
+                yield Static("", classes="tab-content")
+
+
+class _RoutineMetadataTabs(Vertical):
+    """Widget containing the tabbed metadata view for a procedure or function."""
+
+    def __init__(self, schema: str, name: str, routine_type: str) -> None:
+        super().__init__()
+        self._schema = schema
+        self._name = name
+        self._routine_type = routine_type
+        self.styles.height = "1fr"
+
+    def compose(self) -> ComposeResult:
+        label = self._routine_type.lower()
+        yield Static(
+            f"[yellow]{self._schema}[/yellow].[bold cyan]{self._name}[/bold cyan]"
+            f" [dim]({label})[/dim]",
+            id="object-header",
+        )
+        with TabbedContent(id="metadata-tabs"):
+            with TabPane("General", id="tab-general"):
+                yield Static("Loading...", classes="tab-content")
+            with TabPane("Parameters", id="tab-params"):
+                yield Static("", classes="tab-content")
+            with TabPane("Dependencies", id="tab-deps"):
+                yield Static("", classes="tab-content")
+            with TabPane("DDL", id="tab-ddl"):
+                yield Static("", classes="tab-content")
+
+
+class _TriggerMetadataTabs(Vertical):
+    """Widget containing the tabbed metadata view for a trigger."""
+
+    def __init__(self, schema: str, name: str) -> None:
+        super().__init__()
+        self._schema = schema
+        self._name = name
+        self.styles.height = "1fr"
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"[yellow]{self._schema}[/yellow].[bold cyan]{self._name}[/bold cyan]"
+            f" [dim](trigger)[/dim]",
+            id="object-header",
+        )
+        with TabbedContent(id="metadata-tabs"):
+            with TabPane("General", id="tab-general"):
+                yield Static("Loading...", classes="tab-content")
+            with TabPane("Dependencies", id="tab-deps"):
+                yield Static("", classes="tab-content")
+            with TabPane("DDL", id="tab-ddl"):
+                yield Static("", classes="tab-content")
+
+
+class _EventMetadataTabs(Vertical):
+    """Widget containing the tabbed metadata view for an event."""
+
+    def __init__(self, schema: str, name: str) -> None:
+        super().__init__()
+        self._schema = schema
+        self._name = name
+        self.styles.height = "1fr"
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"[yellow]{self._schema}[/yellow].[bold cyan]{self._name}[/bold cyan]"
+            f" [dim](event)[/dim]",
+            id="object-header",
+        )
+        with TabbedContent(id="metadata-tabs"):
+            with TabPane("General", id="tab-general"):
+                yield Static("Loading...", classes="tab-content")
+            with TabPane("Dependencies", id="tab-deps"):
+                yield Static("", classes="tab-content")
+            with TabPane("DDL", id="tab-ddl"):
+                yield Static("", classes="tab-content")
 
 
 def _format_bytes(size: int) -> str:

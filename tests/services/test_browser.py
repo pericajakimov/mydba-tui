@@ -4,14 +4,19 @@ from unittest.mock import MagicMock, patch
 
 from mydba_tui.services.browser import (
     ColumnInfo,
+    EventInfo,
     ForeignKeyInfo,
     GrantInfo,
     IndexInfo,
     IndexSizeInfo,
     ObjectCounts,
     PartitionInfo,
+    RoutineInfo,
+    RoutineParam,
     TableInfo,
+    TriggerDetailInfo,
     TriggerInfo,
+    ViewInfo,
     get_index_sizes,
     get_sample_data,
     get_table_fk_incoming,
@@ -625,3 +630,62 @@ def test_get_sample_data_empty_table(mock_log: MagicMock) -> None:
 
     assert col_names == ["id", "name"]
     assert rows == []
+
+
+# --- View, Routine, Trigger, Event dataclass tests ---
+
+
+def test_view_info_defaults() -> None:
+    """ViewInfo should have empty defaults."""
+    v = ViewInfo()
+    assert v.schema == ""
+    assert v.name == ""
+    assert v.definition == ""
+    assert v.check_option == "NONE"
+    assert v.is_updatable == ""
+    assert v.definer == ""
+    assert v.security_type == ""
+
+
+def test_routine_info_defaults() -> None:
+    """RoutineInfo should have empty defaults."""
+    r = RoutineInfo()
+    assert r.schema == ""
+    assert r.name == ""
+    assert r.routine_type == ""
+    assert r.return_type == ""
+    assert r.definition == ""
+    assert r.is_deterministic == ""
+
+
+def test_routine_param_defaults() -> None:
+    """RoutineParam should have empty defaults."""
+    p = RoutineParam()
+    assert p.ordinal == 0
+    assert p.mode == ""
+    assert p.name == ""
+    assert p.data_type == ""
+
+
+def test_trigger_detail_info_defaults() -> None:
+    """TriggerDetailInfo should have empty defaults."""
+    t = TriggerDetailInfo()
+    assert t.schema == ""
+    assert t.name == ""
+    assert t.event == ""
+    assert t.table_name == ""
+    assert t.timing == ""
+    assert t.body == ""
+    assert t.definer == ""
+
+
+def test_event_info_defaults() -> None:
+    """EventInfo should have empty defaults."""
+    e = EventInfo()
+    assert e.schema == ""
+    assert e.name == ""
+    assert e.event_type == ""
+    assert e.status == ""
+    assert e.definition == ""
+    assert e.definer == ""
+    assert e.interval_value == ""

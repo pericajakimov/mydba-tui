@@ -45,6 +45,7 @@ dependencies = [
     "mysql-connector-python>=9.0.0",
     "pyyaml>=6.0",
     "paramiko>=3.0.0",
+    "sqlglot>=26.0.0",
 ]
 
 

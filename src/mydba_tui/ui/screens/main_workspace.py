@@ -25,6 +25,7 @@ class MainWorkspaceScreen(Screen[None]):
 
     BINDINGS = [
         Binding("c", "open_profiles", "Connections", key_display="C"),
+        Binding("r", "refresh", "Refresh", key_display="R"),
         Binding("f6", "switch_focus", "Switch Panel", key_display="F6"),
         Binding("f10", "quit", "Exit", key_display="F10"),
     ]
@@ -107,6 +108,8 @@ class MainWorkspaceScreen(Screen[None]):
         self._table_partitions: Any = None
         self._table_grants: Any = None
         self._table_ddl: str = ""
+        # Dependency graph (schema-wide, persists across table selections)
+        self._dep_graph: Any = None
 
     def compose(self) -> ComposeResult:
         """Build the split-pane layout."""
@@ -156,6 +159,7 @@ class MainWorkspaceScreen(Screen[None]):
         self._table_partitions = None
         self._table_grants = None
         self._table_ddl = ""
+        self._dep_graph = None
 
         content_panel = self.query_one("#content-panel", Vertical)
         content_panel.remove_children()
@@ -400,6 +404,8 @@ class MainWorkspaceScreen(Screen[None]):
             self._render_partitions_tab()
         elif pane_id == "tab-grants":
             self._render_grants_tab()
+        elif pane_id == "tab-deps":
+            self._render_dependencies_tab()
         elif pane_id == "tab-sample":
             self._update_sample_results(
                 "[dim]Click a button above to load sample data.[/dim]"
@@ -788,6 +794,65 @@ class MainWorkspaceScreen(Screen[None]):
 
         self._update_tab("tab-grants", "\n".join(lines))
 
+    def _render_dependencies_tab(self) -> None:
+        """Render dependencies from the cached dependency graph."""
+        from mydba_tui.services.dependencies import (
+            DependencyGraph,
+        )
+
+        graph = self._dep_graph
+        schema = self._selected_schema
+        table = self._selected_object
+
+        if not schema or not table:
+            return
+
+        if not isinstance(graph, DependencyGraph):
+            self._update_tab(
+                "tab-deps",
+                "[dim]Dependency graph not built yet.\n\n"
+                "Use Refresh (r) to build the dependency graph.[/dim]",
+            )
+            return
+
+        # Get all objects that reference this table (reverse lookup)
+        dependents = graph.get_dependents_by_name(schema, table)
+
+        if not dependents:
+            self._update_tab(
+                "tab-deps",
+                f"[dim]No objects depend on {schema}.{table}[/dim]",
+            )
+            return
+
+        # Group by object type
+        by_type: dict[str, list[str]] = {}
+        for dep in dependents:
+            type_label = dep.obj_type.value
+            if type_label not in by_type:
+                by_type[type_label] = []
+            qualified = f"{dep.schema}.{dep.name}"
+            if qualified not in by_type[type_label]:
+                by_type[type_label].append(qualified)
+
+        # Sort types in a logical order
+        type_order = ["VIEW", "PROCEDURE", "FUNCTION", "TRIGGER", "EVENT", "TABLE"]
+        sorted_types = sorted(
+            by_type.keys(), key=lambda t: type_order.index(t) if t in type_order else 99
+        )
+
+        lines: list[str] = []
+        lines.append(f"[bold]Objects depending on[/bold] [cyan]{schema}.{table}[/cyan]\n")
+
+        for type_label in sorted_types:
+            names = sorted(by_type[type_label])
+            lines.append(f"  [bold]{type_label}[/bold] ({len(names)})")
+            for name in names:
+                lines.append(f"    [cyan]{name}[/cyan]")
+            lines.append("")
+
+        self._update_tab("tab-deps", "\n".join(lines))
+
     def _render_ddl_tab(self) -> None:
         """Render DDL from cached data."""
         if self._table_ddl:
@@ -890,6 +955,43 @@ class MainWorkspaceScreen(Screen[None]):
         """Navigate to Connection Profiles."""
         self.app.push_screen("profiles")
 
+    def action_refresh(self) -> None:
+        """Refresh the object browser tree and rebuild the dependency graph."""
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.services.dependencies import build_dependency_graph
+
+        self._load_schemas()
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return
+
+        # Collect schemas from the tree
+        tree = self.query_one("#browser-tree", Tree)
+        schemas: list[str] = []
+        for node in tree.root.children:
+            label = str(node.label)
+            if label:
+                schemas.append(label)
+
+        if not schemas:
+            return
+
+        self.notify("Building dependency graph...", severity="information")
+
+        try:
+            self._dep_graph = build_dependency_graph(
+                conn_result.connection, schemas
+            )
+            dep_count = sum(len(v) for v in self._dep_graph.forward.values())
+            self.notify(
+                f"Dependency graph built: {len(self._dep_graph.objects)} objects, "
+                f"{dep_count} dependencies.",
+                severity="information",
+            )
+        except Exception as e:
+            self.notify(f"Failed to build dependency graph: {e}", severity="error")
+
     def action_quit(self) -> None:
         """Exit the application."""
         self.app.exit()
@@ -923,6 +1025,8 @@ class _TableMetadataTabs(Vertical):
             with TabPane("Triggers", id="tab-triggers"):
                 yield Static("", classes="tab-content")
             with TabPane("Grants", id="tab-grants"):
+                yield Static("", classes="tab-content")
+            with TabPane("Dependencies", id="tab-deps"):
                 yield Static("", classes="tab-content")
             with TabPane("DDL", id="tab-ddl"):
                 yield Static("", classes="tab-content")

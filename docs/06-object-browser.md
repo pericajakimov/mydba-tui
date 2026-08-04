@@ -133,8 +133,8 @@ Available tabs:
 - Foreign Keys
 - Triggers
 - Grants
-- DDL
 - Dependencies
+- DDL
 - Sample Data
 
 ---
@@ -307,23 +307,26 @@ The goal is to provide an immediate understanding of who can access this table a
 
 # Dependencies
 
-The Dependencies view will provide object relationships determined by combining metadata and object definitions.
+The Dependencies tab shows all database objects that reference the currently selected table.
 
-Hard-wired dependencies (from metadata):
+Dependencies are discovered by parsing SQL definitions with sqlglot (MySQL dialect) and building an in-memory dependency graph. This provides accurate results based on actual SQL syntax rather than simple text matching.
 
-- Foreign keys referencing this table (already shown in the Foreign Keys tab under "Referenced By").
+The graph is built on demand via the Refresh action (`R` key), which also reloads the object browser tree. The graph covers all schemas visible in the browser and is cached in memory until the next refresh or reconnection.
 
-Code-based dependencies (text search in definitions):
+Displayed information:
 
-- Views using the table.
-- Procedures using the table.
-- Functions using the table.
-- Triggers referencing the table in their body.
-- Events using the table.
+- Objects grouped by type (VIEW, PROCEDURE, FUNCTION, TRIGGER, EVENT, TABLE)
+- Count per type
+- Fully-qualified names (schema.name) for each dependent object
 
-Code-based dependencies are best-effort (text matching in definitions) and will be clearly indicated as such.
+Dependency sources:
 
-Status: Planned for a future iteration as a separate tab.
+- SQL parsing of view definitions, procedure/function bodies, trigger actions, and event definitions
+- Foreign key relationships from metadata
+
+If the dependency graph has not been built yet, the tab displays a hint to use Refresh.
+
+See `docs/20-dependencies.md` for the full design of the Dependency Analysis Engine.
 
 ---
 

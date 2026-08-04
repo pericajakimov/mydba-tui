@@ -680,8 +680,9 @@ class MainWorkspaceScreen(Screen[None]):
         self._update_tab("tab-fk", "\n".join(lines))
 
     def _render_triggers_tab(self) -> None:
-        """Render triggers from cached data."""
+        """Render triggers from cached data with syntax-highlighted bodies."""
         from mydba_tui.services.browser import TriggerInfo
+        from mydba_tui.ui.mysql_highlight import highlight_mysql
 
         triggers = self._table_triggers
 
@@ -692,25 +693,32 @@ class MainWorkspaceScreen(Screen[None]):
             return
 
         trigs = [t for t in triggers if isinstance(t, TriggerInfo)]
-        lines: list[str] = []
 
-        for i, trg in enumerate(trigs):
-            if i > 0:
-                lines.append("[dim]─────────────────────────────────────────[/dim]")
-                lines.append("")
-            # Header: name (TIMING EVENT)
-            lines.append(
-                f"[bold cyan]{trg.name}[/bold cyan] [dim]({trg.timing} {trg.event})[/dim]"
-            )
-            lines.append(f"  [dim]Definer:[/dim] {trg.definer}")
-            lines.append(f"  [dim]Created:[/dim] {trg.created}")
-            lines.append("")
-            # Body as raw text, indented
-            for body_line in trg.body.splitlines():
-                lines.append(f"  {body_line}")
-            lines.append("")
+        try:
+            pane = self.query_one("#tab-triggers", TabPane)
+            pane.remove_children()
 
-        self._update_tab("tab-triggers", "\n".join(lines))
+            for i, trg in enumerate(trigs):
+                if i > 0:
+                    pane.mount(Static(
+                        "[dim]─────────────────────────────────────────[/dim]\n"
+                    ))
+
+                # Header with markup
+                header = (
+                    f"[bold cyan]{trg.name}[/bold cyan]"
+                    f" [dim]({trg.timing} {trg.event})[/dim]\n"
+                    f"  [dim]Definer:[/dim] {trg.definer}\n"
+                    f"  [dim]Created:[/dim] {trg.created}\n"
+                )
+                pane.mount(Static(header))
+
+                # Body with SQL highlighting
+                if trg.body:
+                    highlighted = highlight_mysql(trg.body)
+                    pane.mount(Static(highlighted, classes="tab-content"))
+        except Exception:
+            pass
 
     def _render_partitions_tab(self) -> None:
         """Render partitions from cached data."""
@@ -987,31 +995,58 @@ class MainWorkspaceScreen(Screen[None]):
             self._update_sample_results("[dim]No rows returned.[/dim]")
             return
 
-        # Build vertical \G-style output
+        # Build colored vertical \G-style output
+        from rich.style import Style
+        from rich.text import Text
+
         label = "First" if order == "ASC" else "Last"
         max_name_len = max(len(name) for name in col_names)
-        lines: list[str] = []
-        lines.append(f"[dim]{label} {len(rows)} rows:[/dim]\n")
+
+        _s_null = Style(color="#666666", italic=True)
+        _s_binary = Style(color="#c586c0")
+        _s_number = Style(color="#b5cea8")
+        _s_date = Style(color="#4ec9b0")
+        _s_string = Style(color="#ce9178")
+        _s_border = Style(color="#555555")
+        _s_header = Style(bold=True)
+
+        text = Text()
+        text.append(f"{label} {len(rows)} rows:\n\n", style=Style(dim=True))
 
         for row_num, row in enumerate(rows, 1):
-            lines.append(
-                f"[bold]{'*' * 27} {row_num}. row {'*' * 27}[/bold]"
+            text.append(
+                f"{'*' * 27} {row_num}. row {'*' * 27}\n",
+                style=_s_border,
             )
             for i, val in enumerate(row):
                 name = col_names[i]
+                text.append(f"{name:>{max_name_len}}: ", style=_s_header)
                 if val == "NULL":
-                    val_str = "[dim]NULL[/dim]"
+                    text.append("NULL\n", style=_s_null)
                 elif val == "<binary>":
-                    val_str = "[dim]<binary>[/dim]"
+                    text.append("<binary>\n", style=_s_binary)
+                elif val.startswith("0x"):
+                    text.append(val + "\n", style=_s_binary)
+                elif _is_numeric_string(val):
+                    text.append(val + "\n", style=_s_number)
+                elif _is_date_string(val):
+                    text.append(val + "\n", style=_s_date)
                 else:
-                    val_str = val
-                lines.append(f"{name:>{max_name_len}}: {val_str}")
-            lines.append("")
+                    text.append(val + "\n", style=_s_string)
+            text.append("\n")
 
-        self._update_sample_results("\n".join(lines))
+        self._update_sample_results_rich(text)
 
     def _update_sample_results(self, content: str) -> None:
-        """Update the sample data results area."""
+        """Update the sample data results area with markup string."""
+        try:
+            results = self.query_one("#sample-results", Static)
+            results.update(content)
+        except Exception:
+            pass
+
+    def _update_sample_results_rich(self, content: Any) -> None:
+        """Update the sample data results area with Rich Text object."""
         try:
             results = self.query_one("#sample-results", Static)
             results.update(content)
@@ -1580,3 +1615,21 @@ def _format_bytes(size: int) -> str:
     if i == 0:
         return f"{size} B"
     return f"{fsize:.1f} {units[i]}"
+
+
+def _is_numeric_string(s: str) -> bool:
+    """Check if a string looks like a number."""
+    try:
+        float(s)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_date_string(s: str) -> bool:
+    """Check if a string looks like a date/datetime/time."""
+    if len(s) >= 10 and s[4:5] == "-" and s[7:8] == "-":
+        return True  # YYYY-MM-DD...
+    if len(s) == 8 and s[2:3] == ":" and s[5:6] == ":":
+        return True  # HH:MM:SS
+    return False

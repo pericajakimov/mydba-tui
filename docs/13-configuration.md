@@ -338,3 +338,61 @@ The Configuration subsystem follows these principles:
 - Easy to customize.
 - Backwards compatible.
 - Predictable behavior.
+
+
+---
+
+# Color Customization (Future)
+
+The application uses a fixed color scheme for SQL syntax highlighting and query result rendering.
+
+A future enhancement will allow users to override these colors via configuration files in `~/.config/mydba/`.
+
+## Result Colors
+
+File: `~/.config/mydba/results_theme.yaml`
+
+Overrides colors used for query result display:
+
+```yaml
+# Result cell colors (hex values)
+null: "#666666"
+integer: "#b5cea8"
+decimal: "#d7ba7d"
+string: "#ce9178"
+date: "#4ec9b0"
+binary: "#c586c0"
+border: "#555555"
+json_key: "#569cd6"
+json_string: "#ce9178"
+json_number: "#b5cea8"
+json_bool: "#7daf9c"
+```
+
+## SQL Syntax Colors
+
+File: `~/.config/mydba/sql_theme.yaml`
+
+Overrides colors used for SQL syntax highlighting in DDL views, body sections, and the SQL Workspace editor:
+
+```yaml
+# SQL syntax colors (hex values)
+keyword: "#c586c0"
+flow_control: "#569cd6"
+data_type: "#4ec9b0"
+function: "#dcdcaa"
+string: "#ce9178"
+number: "#b5cea8"
+comment: "#6a9955"
+operator: "#cccccc"
+identifier: "#9cdcfe"
+constant: "#7daf9c"
+```
+
+## Behavior
+
+- If the file does not exist, built-in defaults are used.
+- Only specified keys are overridden; missing keys fall back to defaults.
+- Invalid color values are ignored (defaults used instead).
+- Changes take effect on next application start.
+- Deleting the file resets to defaults.

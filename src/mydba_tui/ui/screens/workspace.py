@@ -9,12 +9,15 @@ and auto-deleted on clean exit unless explicitly saved.
 
 import os
 import re
-import time
-from datetime import datetime
+import time as _time
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from rich.markup import escape as rich_escape
+from rich.style import Style
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer, Vertical
@@ -304,12 +307,12 @@ class WorkspaceScreen(Screen[None]):
                 self._update_status, f"Executing: {stmt[:60]}..."
             )
 
-            start = time.perf_counter()
+            start = _time.perf_counter()
             try:
                 cursor = conn_result.connection.cursor(buffered=True)
                 cursor.execute(stmt)
 
-                duration = time.perf_counter() - start
+                duration = _time.perf_counter() - start
                 log_sql(stmt, duration, "workspace")
 
                 if cursor.description:
@@ -364,7 +367,7 @@ class WorkspaceScreen(Screen[None]):
                     self._log_to_session(stmt, summary, duration)
 
             except Exception as e:
-                duration = time.perf_counter() - start
+                duration = _time.perf_counter() - start
                 log_sql(stmt, duration, "workspace.error")
                 self.app.call_from_thread(self._remove_status)
                 self.app.call_from_thread(self._append_error, str(e), stmt)
@@ -458,90 +461,30 @@ class WorkspaceScreen(Screen[None]):
 
         panel.mount(Static("\n".join(header_lines), classes="result-block"))
 
-        # Data (no markup — safe from MarkupError)
+        # Data (colored Rich Text)
         data_lines: list[str] = []
-
         if not rows:
             panel.mount(
                 Static("[dim]Empty set.[/dim]", classes="result-block")
             )
         elif vertical:
-            # Vertical output (\G style)
-            max_name_len = max(len(name) for name in col_names)
-            for row_num, row in enumerate(rows, 1):
-                data_lines.append(
-                    f"{'*' * 27} {row_num}. row {'*' * 27}"
-                )
-                for i, val in enumerate(row):
-                    name = col_names[i] if i < len(col_names) else f"col{i}"
-                    val_str = _format_cell(val)
-                    data_lines.append(f"{name:>{max_name_len}}: {val_str}")
-                data_lines.append("")
-
-            data_widget = Static(
-                "\n".join(data_lines), classes="result-data", markup=False
-            )
+            # Vertical output (\G style) — colored
+            data_text = _build_vertical_text(col_names, rows)
+            data_widget = Static(data_text, classes="result-data")
             panel.mount(data_widget)
+            # Plain text for log
+            data_lines = _build_vertical_plain(col_names, rows)
         else:
-            # Tabular output
-            col_widths = [len(name) for name in col_names]
-            str_rows: list[list[str]] = []
-            for row in rows:
-                str_row = []
-                for i, val in enumerate(row):
-                    s = _format_cell(val)
-                    str_row.append(s)
-                    if i < len(col_widths):
-                        col_widths[i] = max(col_widths[i], len(s))
-                str_rows.append(str_row)
-
-            # Get format from settings
+            # Tabular output — colored
             result_format = getattr(
                 getattr(self.app, "settings", None), "result_format", "mysql"
             )
-
-            if result_format == "mysql":
-                border = "+" + "+".join(
-                    "-" * (w + 2) for w in col_widths
-                ) + "+"
-                hdr = "|" + "|".join(
-                    f" {name:<{col_widths[i]}} "
-                    for i, name in enumerate(col_names)
-                ) + "|"
-                data_lines.append(border)
-                data_lines.append(hdr)
-                data_lines.append(border)
-                for str_row in str_rows:
-                    row_line = "|" + "|".join(
-                        f" {val:<{col_widths[i]}} "
-                        if i < len(col_widths)
-                        else f" {val} "
-                        for i, val in enumerate(str_row)
-                    ) + "|"
-                    data_lines.append(row_line)
-                data_lines.append(border)
-            else:
-                hdr = "  ".join(
-                    f"{name:<{col_widths[i]}}"
-                    for i, name in enumerate(col_names)
-                )
-                sep = "  ".join("-" * w for w in col_widths)
-                data_lines.append(hdr)
-                data_lines.append(sep)
-                for str_row in str_rows:
-                    row_line = "  ".join(
-                        f"{val:<{col_widths[i]}}"
-                        if i < len(col_widths)
-                        else val
-                        for i, val in enumerate(str_row)
-                    )
-                    data_lines.append(row_line)
-
-            data_widget = Static(
-                "\n".join(data_lines), classes="result-data", markup=False
-            )
+            data_text = _build_table_text(col_names, rows, result_format)
+            data_widget = Static(data_text, classes="result-data")
             data_widget.styles.width = "auto"
             panel.mount(data_widget)
+            # Plain text for log
+            data_lines = _build_table_plain(col_names, rows, result_format)
 
         # Summary AFTER results
         panel.mount(
@@ -727,6 +670,280 @@ def _format_cell(val: Any) -> str:
     if isinstance(val, (bytes, bytearray)):
         return "0x" + val.hex().upper()
     return str(val)
+
+
+# --- Result coloring ---
+
+_S_NULL = Style(color="#666666", italic=True)  # Gray — NULL
+_S_NUMBER = Style(color="#b5cea8")  # Light green — integers
+_S_DECIMAL = Style(color="#d7ba7d")  # Warm gold — decimals/floats
+_S_STRING = Style(color="#ce9178")  # Orange — strings (same as SQL editor)
+_S_DATE = Style(color="#4ec9b0")  # Teal — dates/times
+_S_BINARY = Style(color="#c586c0")  # Purple — binary/hex
+_S_BORDER = Style(color="#555555")  # Dark gray — table borders
+_S_HEADER = Style(bold=True)  # Bold — column headers
+_S_JSON_KEY = Style(color="#569cd6")  # Blue — JSON keys
+_S_JSON_STRING = Style(color="#ce9178")  # Orange — JSON strings
+_S_JSON_NUMBER = Style(color="#b5cea8")  # Light green — JSON numbers
+_S_JSON_BOOL = Style(color="#7daf9c")  # Muted teal — JSON booleans/null
+_S_JSON_BRACE = Style(color="#cccccc")  # Light gray — braces/brackets
+
+
+def _cell_style(val: Any) -> Style:
+    """Determine the display style for a cell value based on its Python type."""
+    if val is None:
+        return _S_NULL
+    if isinstance(val, (bytes, bytearray)):
+        return _S_BINARY
+    if isinstance(val, int):
+        return _S_NUMBER
+    if isinstance(val, (float, Decimal)):
+        return _S_DECIMAL
+    if isinstance(val, (datetime, date, time, timedelta)):
+        return _S_DATE
+    # Check for date/time types from mysql-connector
+    s = str(val)
+    # Detect datetime-like strings (from cursor)
+    if _looks_like_datetime(s):
+        return _S_DATE
+    return _S_STRING
+
+
+def _looks_like_datetime(s: str) -> bool:
+    """Quick check if a string looks like a date/datetime."""
+    if len(s) >= 10 and s[4:5] == "-" and s[7:8] == "-":
+        return True  # YYYY-MM-DD...
+    if len(s) == 8 and s[2:3] == ":" and s[5:6] == ":":
+        return True  # HH:MM:SS
+    return False
+
+
+def _is_json(s: str) -> bool:
+    """Quick check if a string looks like JSON."""
+    stripped = s.strip()
+    if not stripped:
+        return False
+    if (stripped[0] == "{" and stripped[-1] == "}") or (
+        stripped[0] == "[" and stripped[-1] == "]"
+    ):
+        import json
+
+        try:
+            json.loads(stripped)
+            return True
+        except (json.JSONDecodeError, ValueError):
+            return False
+    return False
+
+
+_JSON_TOKEN_RE = re.compile(
+    r"""
+    (?P<string>"(?:[^"\\]|\\.)*")  |
+    (?P<number>-?\d+\.?\d*(?:[eE][+-]?\d+)?)  |
+    (?P<bool>true|false|null)  |
+    (?P<brace>[{}\[\]])  |
+    (?P<punct>[,:])  |
+    (?P<ws>\s+)  |
+    (?P<other>.)
+    """,
+    re.VERBOSE,
+)
+
+
+def _highlight_json(s: str) -> Text:
+    """Highlight a JSON string with colors."""
+    text = Text()
+    # Track if previous non-ws token was a key (string followed by :)
+    tokens = list(_JSON_TOKEN_RE.finditer(s))
+    for idx, match in enumerate(tokens):
+        token = match.group()
+        kind = match.lastgroup
+
+        if kind == "string":
+            # Check if this string is a key (followed by :)
+            is_key = False
+            for lookahead in tokens[idx + 1 :]:
+                if lookahead.lastgroup == "ws":
+                    continue
+                if lookahead.group() == ":":
+                    is_key = True
+                break
+            if is_key:
+                text.append(token, style=_S_JSON_KEY)
+            else:
+                text.append(token, style=_S_JSON_STRING)
+        elif kind == "number":
+            text.append(token, style=_S_JSON_NUMBER)
+        elif kind == "bool":
+            text.append(token, style=_S_JSON_BOOL)
+        elif kind == "brace":
+            text.append(token, style=_S_JSON_BRACE)
+        elif kind == "punct":
+            text.append(token, style=_S_JSON_BRACE)
+        else:
+            text.append(token)
+    return text
+
+
+def _styled_cell(val: Any) -> Text:
+    """Create a styled Text for a single cell value."""
+    s = _format_cell(val)
+    style = _cell_style(val)
+
+    # If it's a string value and looks like JSON, highlight it
+    if style == _S_STRING and isinstance(val, str) and _is_json(val):
+        return _highlight_json(val)
+
+    t = Text(s)
+    t.stylize(style)
+    return t
+
+
+def _build_table_text(
+    col_names: list[str], rows: list[Any], fmt: str
+) -> Text:
+    """Build a colored Rich Text table from result data."""
+    # Calculate widths and format cells
+    col_widths = [len(name) for name in col_names]
+    cell_strings: list[list[str]] = []
+    for row in rows:
+        str_row = []
+        for i, val in enumerate(row):
+            s = _format_cell(val)
+            str_row.append(s)
+            if i < len(col_widths):
+                col_widths[i] = max(col_widths[i], len(s))
+        cell_strings.append(str_row)
+
+    text = Text()
+
+    if fmt == "mysql":
+        border = "+" + "+".join("-" * (w + 2) for w in col_widths) + "+"
+        text.append(border + "\n", style=_S_BORDER)
+
+        # Header
+        text.append("|", style=_S_BORDER)
+        for i, name in enumerate(col_names):
+            text.append(f" {name:<{col_widths[i]}} ", style=_S_HEADER)
+            text.append("|", style=_S_BORDER)
+        text.append("\n")
+        text.append(border + "\n", style=_S_BORDER)
+
+        # Data rows
+        for row_idx, row in enumerate(rows):
+            text.append("|", style=_S_BORDER)
+            for i, val in enumerate(row):
+                w = col_widths[i] if i < len(col_widths) else len(cell_strings[row_idx][i])
+                cell_text = _styled_cell(val)
+                # Pad to column width
+                padding = w - len(cell_strings[row_idx][i])
+                text.append(" ")
+                text.append_text(cell_text)
+                if padding > 0:
+                    text.append(" " * padding)
+                text.append(" ", style=_S_BORDER)
+                text.append("|", style=_S_BORDER)
+            text.append("\n")
+        text.append(border, style=_S_BORDER)
+    else:
+        # Simple format
+        hdr = "  ".join(
+            f"{name:<{col_widths[i]}}" for i, name in enumerate(col_names)
+        )
+        text.append(hdr + "\n", style=_S_HEADER)
+        sep = "  ".join("-" * w for w in col_widths)
+        text.append(sep + "\n", style=_S_BORDER)
+
+        for row_idx, row in enumerate(rows):
+            for i, val in enumerate(row):
+                w = col_widths[i] if i < len(col_widths) else len(cell_strings[row_idx][i])
+                cell_text = _styled_cell(val)
+                padding = w - len(cell_strings[row_idx][i])
+                text.append_text(cell_text)
+                if padding > 0:
+                    text.append(" " * padding)
+                if i < len(row) - 1:
+                    text.append("  ")
+            text.append("\n")
+
+    return text
+
+
+def _build_vertical_text(col_names: list[str], rows: list[Any]) -> Text:
+    """Build colored Rich Text for vertical (\\G) output."""
+    max_name_len = max(len(name) for name in col_names)
+    text = Text()
+
+    for row_num, row in enumerate(rows, 1):
+        text.append(
+            f"{'*' * 27} {row_num}. row {'*' * 27}\n", style=_S_BORDER
+        )
+        for i, val in enumerate(row):
+            name = col_names[i] if i < len(col_names) else f"col{i}"
+            text.append(f"{name:>{max_name_len}}: ", style=_S_HEADER)
+            cell = _styled_cell(val)
+            text.append_text(cell)
+            text.append("\n")
+        text.append("\n")
+
+    return text
+
+
+def _build_table_plain(
+    col_names: list[str], rows: list[Any], fmt: str
+) -> list[str]:
+    """Build plain text table for log file (no colors)."""
+    col_widths = [len(name) for name in col_names]
+    str_rows: list[list[str]] = []
+    for row in rows:
+        str_row = [_format_cell(val) for val in row]
+        for i, s in enumerate(str_row):
+            if i < len(col_widths):
+                col_widths[i] = max(col_widths[i], len(s))
+        str_rows.append(str_row)
+
+    lines: list[str] = []
+    if fmt == "mysql":
+        border = "+" + "+".join("-" * (w + 2) for w in col_widths) + "+"
+        hdr = "|" + "|".join(
+            f" {name:<{col_widths[i]}} " for i, name in enumerate(col_names)
+        ) + "|"
+        lines.append(border)
+        lines.append(hdr)
+        lines.append(border)
+        for str_row in str_rows:
+            row_line = "|" + "|".join(
+                f" {val:<{col_widths[i]}} "
+                if i < len(col_widths) else f" {val} "
+                for i, val in enumerate(str_row)
+            ) + "|"
+            lines.append(row_line)
+        lines.append(border)
+    else:
+        hdr = "  ".join(f"{name:<{col_widths[i]}}" for i, name in enumerate(col_names))
+        sep = "  ".join("-" * w for w in col_widths)
+        lines.append(hdr)
+        lines.append(sep)
+        for str_row in str_rows:
+            row_line = "  ".join(
+                f"{val:<{col_widths[i]}}" if i < len(col_widths) else val
+                for i, val in enumerate(str_row)
+            )
+            lines.append(row_line)
+    return lines
+
+
+def _build_vertical_plain(col_names: list[str], rows: list[Any]) -> list[str]:
+    """Build plain text vertical output for log file."""
+    max_name_len = max(len(name) for name in col_names)
+    lines: list[str] = []
+    for row_num, row in enumerate(rows, 1):
+        lines.append(f"{'*' * 27} {row_num}. row {'*' * 27}")
+        for i, val in enumerate(row):
+            name = col_names[i] if i < len(col_names) else f"col{i}"
+            lines.append(f"{name:>{max_name_len}}: {_format_cell(val)}")
+        lines.append("")
+    return lines
 
 
 class _FilePromptScreen(Screen[str]):

@@ -369,6 +369,9 @@ Each layer has a single responsibility.
 Possible extensions:
 
 - Dependency Graph visualization
+- Full dependency tree screen (dedicated screen showing the complete
+  dependency tree for any object, with recursive traversal of direct
+  and indirect dependencies, accessible from the Dependencies tab)
 - Export dependency graph
 - Circular dependency detection
 - Safe DROP validation
@@ -379,6 +382,9 @@ Possible extensions:
 - Reverse dependency search
 - Incremental graph refresh
 - Schema comparison using dependency graphs
+- Auto-refresh after DDL (object browser and dependency cache should
+  refresh automatically when a DDL statement is executed, e.g., CREATE,
+  ALTER, DROP — detected via the SQL Workspace module)
 
 ---
 

@@ -130,6 +130,7 @@ class MainWorkspaceScreen(Screen[None]):
         """Load schemas into the tree on mount."""
         self._sync_status_bar()
         self._load_schemas()
+        self._build_dependency_graph()
         self.query_one("#browser-tree", Tree).focus()
 
     def on_screen_resume(self) -> None:
@@ -137,6 +138,7 @@ class MainWorkspaceScreen(Screen[None]):
         self._sync_status_bar()
         self._load_schemas()
         self._reset_content_panel()
+        self._build_dependency_graph()
 
     def _sync_status_bar(self) -> None:
         """Sync status bar with current connection state."""
@@ -798,6 +800,8 @@ class MainWorkspaceScreen(Screen[None]):
         """Render dependencies from the cached dependency graph."""
         from mydba_tui.services.dependencies import (
             DependencyGraph,
+            ObjectRef,
+            ObjectType,
         )
 
         graph = self._dep_graph
@@ -815,41 +819,104 @@ class MainWorkspaceScreen(Screen[None]):
             )
             return
 
-        # Get all objects that reference this table (reverse lookup)
-        dependents = graph.get_dependents_by_name(schema, table)
-
-        if not dependents:
-            self._update_tab(
-                "tab-deps",
-                f"[dim]No objects depend on {schema}.{table}[/dim]",
-            )
-            return
-
-        # Group by object type
-        by_type: dict[str, list[str]] = {}
-        for dep in dependents:
-            type_label = dep.obj_type.value
-            if type_label not in by_type:
-                by_type[type_label] = []
-            qualified = f"{dep.schema}.{dep.name}"
-            if qualified not in by_type[type_label]:
-                by_type[type_label].append(qualified)
-
-        # Sort types in a logical order
-        type_order = ["VIEW", "PROCEDURE", "FUNCTION", "TRIGGER", "EVENT", "TABLE"]
-        sorted_types = sorted(
-            by_type.keys(), key=lambda t: type_order.index(t) if t in type_order else 99
-        )
+        # Find this object in the graph
+        current_ref: ObjectRef | None = None
+        for otype in (ObjectType.TABLE, ObjectType.VIEW):
+            key = f"{otype.value}:{schema}.{table}"
+            if key in graph.objects:
+                current_ref = graph.objects[key]
+                break
 
         lines: list[str] = []
-        lines.append(f"[bold]Objects depending on[/bold] [cyan]{schema}.{table}[/cyan]\n")
 
-        for type_label in sorted_types:
-            names = sorted(by_type[type_label])
-            lines.append(f"  [bold]{type_label}[/bold] ({len(names)})")
-            for name in names:
-                lines.append(f"    [cyan]{name}[/cyan]")
-            lines.append("")
+        # --- Section 1: Objects that this object depends on (forward) ---
+        depends_on: list[ObjectRef] = []
+        if current_ref:
+            depends_on = graph.get_dependencies(current_ref)
+
+        if depends_on:
+            lines.append(
+                f"[bold][yellow]{schema}[/yellow].[cyan]{table}[/cyan]"
+                f" depends on:[/bold]\n"
+            )
+
+            # Group by type
+            fwd_by_type: dict[str, list[tuple[str, str, str]]] = {}
+            for dep in depends_on:
+                type_label = dep.obj_type.value
+                if type_label not in fwd_by_type:
+                    fwd_by_type[type_label] = []
+                label = ""
+                if current_ref:
+                    label = graph.get_edge_label(current_ref, dep)
+                entry = (dep.schema, dep.name, label)
+                if entry not in fwd_by_type[type_label]:
+                    fwd_by_type[type_label].append(entry)
+
+            type_order = ["TABLE", "VIEW", "PROCEDURE", "FUNCTION", "TRIGGER", "EVENT"]
+            for type_label in sorted(
+                fwd_by_type.keys(),
+                key=lambda t: type_order.index(t) if t in type_order else 99,
+            ):
+                entries = sorted(fwd_by_type[type_label])
+                lines.append(f"  [bold]{type_label}[/bold] ({len(entries)})")
+                for dep_schema, dep_name, label in entries:
+                    line = (
+                        f"    [yellow]{dep_schema}[/yellow]"
+                        f".[cyan]{dep_name}[/cyan]"
+                    )
+                    if label:
+                        line += f" [dim]({label})[/dim]"
+                    lines.append(line)
+                lines.append("")
+
+        # --- Section 2: Objects depending on this object (reverse) ---
+        dependents = graph.get_dependents_by_name(schema, table)
+
+        if dependents:
+            if depends_on:
+                lines.append("")
+            lines.append(
+                f"[bold]Objects depending on "
+                f"[yellow]{schema}[/yellow].[cyan]{table}[/cyan]:[/bold]\n"
+            )
+
+            rev_by_type: dict[str, list[tuple[str, str, str]]] = {}
+            for dep in dependents:
+                type_label = dep.obj_type.value
+                if type_label not in rev_by_type:
+                    rev_by_type[type_label] = []
+                label = ""
+                if current_ref:
+                    label = graph.get_edge_label(dep, current_ref)
+                entry = (dep.schema, dep.name, label)
+                if entry not in rev_by_type[type_label]:
+                    rev_by_type[type_label].append(entry)
+
+            type_order = ["VIEW", "PROCEDURE", "FUNCTION", "TRIGGER", "EVENT", "TABLE"]
+            for type_label in sorted(
+                rev_by_type.keys(),
+                key=lambda t: type_order.index(t) if t in type_order else 99,
+            ):
+                entries = sorted(rev_by_type[type_label])
+                lines.append(f"  [bold]{type_label}[/bold] ({len(entries)})")
+                for dep_schema, dep_name, label in entries:
+                    line = (
+                        f"    [yellow]{dep_schema}[/yellow]"
+                        f".[cyan]{dep_name}[/cyan]"
+                    )
+                    if label:
+                        line += f" [dim]({label})[/dim]"
+                    lines.append(line)
+                lines.append("")
+
+        if not depends_on and not dependents:
+            self._update_tab(
+                "tab-deps",
+                f"[dim]No dependencies found for [/dim]"
+                f"[yellow]{schema}[/yellow].[cyan]{table}[/cyan]",
+            )
+            return
 
         self._update_tab("tab-deps", "\n".join(lines))
 
@@ -956,33 +1023,22 @@ class MainWorkspaceScreen(Screen[None]):
         self.app.push_screen("profiles")
 
     def action_refresh(self) -> None:
-        """Refresh the object browser tree and rebuild the dependency graph."""
+        """Rebuild the dependency graph without collapsing the object tree."""
+        self._build_dependency_graph()
+
+    def _build_dependency_graph(self) -> None:
+        """Build (or rebuild) the dependency graph from all schemas."""
         from mydba_tui.connection import ConnectionResult
         from mydba_tui.services.dependencies import build_dependency_graph
-
-        self._load_schemas()
 
         conn_result = getattr(self.app, "db_connection", None)
         if conn_result is None or not isinstance(conn_result, ConnectionResult):
             return
 
-        # Collect schemas from the tree
-        tree = self.query_one("#browser-tree", Tree)
-        schemas: list[str] = []
-        for node in tree.root.children:
-            label = str(node.label)
-            if label:
-                schemas.append(label)
-
-        if not schemas:
-            return
-
         self.notify("Building dependency graph...", severity="information")
 
         try:
-            self._dep_graph = build_dependency_graph(
-                conn_result.connection, schemas
-            )
+            self._dep_graph = build_dependency_graph(conn_result.connection)
             dep_count = sum(len(v) for v in self._dep_graph.forward.values())
             self.notify(
                 f"Dependency graph built: {len(self._dep_graph.objects)} objects, "

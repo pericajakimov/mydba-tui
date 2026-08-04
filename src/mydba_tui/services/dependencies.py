@@ -78,14 +78,17 @@ class DependencyGraph:
     objects: dict[str, ObjectRef] = field(default_factory=dict)
     forward: dict[str, list[ObjectRef]] = field(default_factory=dict)
     reverse: dict[str, list[ObjectRef]] = field(default_factory=dict)
+    edge_labels: dict[str, str] = field(default_factory=dict)
 
     def add_object(self, obj: ObjectRef) -> None:
         """Register an object in the graph."""
         key = f"{obj.obj_type.value}:{obj.schema}.{obj.name}"
         self.objects[key] = obj
 
-    def add_dependency(self, source: ObjectRef, target: ObjectRef) -> None:
-        """Add a directed dependency edge."""
+    def add_dependency(
+        self, source: ObjectRef, target: ObjectRef, label: str = ""
+    ) -> None:
+        """Add a directed dependency edge with an optional label."""
         src_key = f"{source.obj_type.value}:{source.schema}.{source.name}"
         tgt_key = f"{target.obj_type.value}:{target.schema}.{target.name}"
 
@@ -96,6 +99,10 @@ class DependencyGraph:
         if tgt_key not in self.reverse:
             self.reverse[tgt_key] = []
         self.reverse[tgt_key].append(source)
+
+        if label:
+            edge_key = f"{src_key}->{tgt_key}"
+            self.edge_labels[edge_key] = label
 
     def get_dependencies(self, obj: ObjectRef) -> list[ObjectRef]:
         """Get objects that this object references (forward lookup)."""
@@ -121,32 +128,37 @@ class DependencyGraph:
                 results.extend(sources)
         return results
 
+    def get_edge_label(self, source: ObjectRef, target: ObjectRef) -> str:
+        """Get the label for an edge between two objects (e.g., FK name)."""
+        src_key = f"{source.obj_type.value}:{source.schema}.{source.name}"
+        tgt_key = f"{target.obj_type.value}:{target.schema}.{target.name}"
+        edge_key = f"{src_key}->{tgt_key}"
+        return self.edge_labels.get(edge_key, "")
+
 
 # --- Object Enumeration ---
 
 
 def _enumerate_objects(
     connection: MySQLConnectionAbstract | PooledMySQLConnection,
-    schemas: list[str],
 ) -> list[tuple[ObjectRef, str]]:
     """Discover all database objects and their SQL definitions.
 
+    Scans all schemas to find objects that may reference or be
+    referenced by other objects.
+
     Args:
         connection: Active MySQL connection.
-        schemas: List of schemas to analyze.
 
     Returns:
         List of (ObjectRef, sql_definition) tuples.
     """
     objects: list[tuple[ObjectRef, str]] = []
 
-    schema_list = ", ".join(f"'{s}'" for s in schemas)
-
     # Views
     sql = (
         "SELECT table_schema, table_name, view_definition "
-        "FROM information_schema.views "
-        f"WHERE table_schema IN ({schema_list})"
+        "FROM information_schema.views"
     )
     objects.extend(_fetch_objects(connection, sql, ObjectType.VIEW, "enum.views"))
 
@@ -154,8 +166,7 @@ def _enumerate_objects(
     sql = (
         "SELECT routine_schema, routine_name, routine_definition "
         "FROM information_schema.routines "
-        f"WHERE routine_schema IN ({schema_list}) "
-        "AND routine_type = 'PROCEDURE'"
+        "WHERE routine_type = 'PROCEDURE'"
     )
     objects.extend(_fetch_objects(connection, sql, ObjectType.PROCEDURE, "enum.procedures"))
 
@@ -163,24 +174,21 @@ def _enumerate_objects(
     sql = (
         "SELECT routine_schema, routine_name, routine_definition "
         "FROM information_schema.routines "
-        f"WHERE routine_schema IN ({schema_list}) "
-        "AND routine_type = 'FUNCTION'"
+        "WHERE routine_type = 'FUNCTION'"
     )
     objects.extend(_fetch_objects(connection, sql, ObjectType.FUNCTION, "enum.functions"))
 
     # Triggers
     sql = (
         "SELECT trigger_schema, trigger_name, action_statement "
-        "FROM information_schema.triggers "
-        f"WHERE trigger_schema IN ({schema_list})"
+        "FROM information_schema.triggers"
     )
     objects.extend(_fetch_objects(connection, sql, ObjectType.TRIGGER, "enum.triggers"))
 
     # Events
     sql = (
         "SELECT event_schema, event_name, event_definition "
-        "FROM information_schema.events "
-        f"WHERE event_schema IN ({schema_list})"
+        "FROM information_schema.events"
     )
     objects.extend(_fetch_objects(connection, sql, ObjectType.EVENT, "enum.events"))
 
@@ -218,18 +226,15 @@ def _fetch_objects(
 
 def _enumerate_tables(
     connection: MySQLConnectionAbstract | PooledMySQLConnection,
-    schemas: list[str],
 ) -> list[ObjectRef]:
     """Discover all tables (they have no SQL definition to parse).
 
     Tables are targets only — other objects reference them.
     """
-    schema_list = ", ".join(f"'{s}'" for s in schemas)
     sql = (
         "SELECT table_schema, table_name "
         "FROM information_schema.tables "
-        f"WHERE table_schema IN ({schema_list}) "
-        "AND table_type = 'BASE TABLE'"
+        "WHERE table_type = 'BASE TABLE'"
     )
     start = time.perf_counter()
     try:
@@ -255,15 +260,15 @@ def _enumerate_tables(
 
 def _enumerate_foreign_keys(
     connection: MySQLConnectionAbstract | PooledMySQLConnection,
-    schemas: list[str],
-) -> list[tuple[str, str, str, str]]:
-    """Discover FK relationships: (source_schema, source_table, target_schema, target_table)."""
-    schema_list = ", ".join(f"'{s}'" for s in schemas)
+) -> list[tuple[str, str, str, str, str]]:
+    """Discover FK relationships.
+
+    Returns: (source_schema, source_table, target_schema, target_table, constraint_name).
+    """
     sql = (
         "SELECT constraint_schema, table_name, "
-        "constraint_schema, referenced_table_name "
-        "FROM information_schema.referential_constraints "
-        f"WHERE constraint_schema IN ({schema_list})"
+        "constraint_schema, referenced_table_name, constraint_name "
+        "FROM information_schema.referential_constraints"
     )
     start = time.perf_counter()
     try:
@@ -282,6 +287,7 @@ def _enumerate_foreign_keys(
             str(row[1] or ""),  # type: ignore[index]
             str(row[2] or ""),  # type: ignore[index]
             str(row[3] or ""),  # type: ignore[index]
+            str(row[4] or ""),  # type: ignore[index]
         )
         for row in rows
         if row[0] and row[1] and row[3]  # type: ignore[index]
@@ -337,9 +343,10 @@ def _parse_references(sql_definition: str, default_schema: str) -> list[str]:
 
 def build_dependency_graph(
     connection: MySQLConnectionAbstract | PooledMySQLConnection,
-    schemas: list[str],
 ) -> DependencyGraph:
-    """Build the complete dependency graph for the given schemas.
+    """Build the complete dependency graph for all user schemas.
+
+    Scans all non-system schemas to discover objects and their relationships.
 
     Steps:
         1. Enumerate all tables (as targets).
@@ -350,7 +357,6 @@ def build_dependency_graph(
 
     Args:
         connection: Active MySQL connection.
-        schemas: List of schemas to analyze.
 
     Returns:
         Populated DependencyGraph.
@@ -358,12 +364,12 @@ def build_dependency_graph(
     graph = DependencyGraph()
 
     # 1. Register all tables
-    tables = _enumerate_tables(connection, schemas)
+    tables = _enumerate_tables(connection)
     for table in tables:
         graph.add_object(table)
 
     # 2. Enumerate objects with definitions
-    objects_with_defs = _enumerate_objects(connection, schemas)
+    objects_with_defs = _enumerate_objects(connection)
 
     # Register all objects
     for obj, _ in objects_with_defs:
@@ -388,12 +394,12 @@ def build_dependency_graph(
                 graph.add_dependency(obj, target)
 
     # 5. Add FK dependencies (table → referenced table)
-    fk_rels = _enumerate_foreign_keys(connection, schemas)
-    for src_schema, src_table, tgt_schema, tgt_table in fk_rels:
+    fk_rels = _enumerate_foreign_keys(connection)
+    for src_schema, src_table, tgt_schema, tgt_table, fk_name in fk_rels:
         source = _find_target(graph, src_schema, src_table)
         target = _find_target(graph, tgt_schema, tgt_table)
         if source and target and source != target:
-            graph.add_dependency(source, target)
+            graph.add_dependency(source, target, label=f"FK: {fk_name}")
 
     return graph
 

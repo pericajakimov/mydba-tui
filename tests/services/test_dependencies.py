@@ -177,7 +177,7 @@ def test_build_dependency_graph(
     mock_fks.return_value = []
 
     mock_conn = MagicMock()
-    graph = build_dependency_graph(mock_conn, ["sales"])
+    graph = build_dependency_graph(mock_conn)
 
     # View should depend on orders table
     deps = graph.get_dependencies(view_ref)
@@ -205,11 +205,11 @@ def test_build_dependency_graph_with_fks(
     mock_objects.return_value = []
 
     mock_fks.return_value = [
-        ("sales", "orders", "sales", "customers"),
+        ("sales", "orders", "sales", "customers", "fk_order_customer"),
     ]
 
     mock_conn = MagicMock()
-    graph = build_dependency_graph(mock_conn, ["sales"])
+    graph = build_dependency_graph(mock_conn)
 
     # orders should depend on customers via FK
     orders = ObjectRef(schema="sales", name="orders", obj_type=ObjectType.TABLE)
@@ -239,7 +239,7 @@ def test_build_dependency_graph_skip_self_reference(
     mock_fks.return_value = []
 
     mock_conn = MagicMock()
-    graph = build_dependency_graph(mock_conn, ["sales"])
+    graph = build_dependency_graph(mock_conn)
 
     deps = graph.get_dependencies(view_ref)
     assert not any(d.name == "v_orders" for d in deps)

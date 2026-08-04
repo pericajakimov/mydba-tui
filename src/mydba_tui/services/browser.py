@@ -741,8 +741,8 @@ def get_sample_data(
     # Build simple query
     order_clause = ""
     if pk_cols:
-        pk_str = ", ".join(f"`{c}`" for c in pk_cols)
-        order_clause = f" ORDER BY {pk_str} {order}"
+        pk_str = ", ".join(f"`{c}` {order}" for c in pk_cols)
+        order_clause = f" ORDER BY {pk_str}"
 
     sample_sql = f"SELECT * FROM `{schema}`.`{table}`{order_clause} LIMIT {limit}"
     start = time.perf_counter()

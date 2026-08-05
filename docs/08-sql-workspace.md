@@ -159,6 +159,35 @@ Formatting should remain consistent with the rendering used throughout the appli
 
 ---
 
+# SQL Formatting
+
+The workspace provides automatic SQL formatting via `Ctrl+Shift+F`.
+
+Behavior:
+
+- If text is selected, only the selected text is formatted.
+- If nothing is selected, the entire editor contents are formatted.
+
+The formatter uses the MySQL dialect and produces:
+
+- Uppercased keywords (configurable)
+- Indented clauses (SELECT, FROM, WHERE, JOIN on separate lines)
+- Proper alignment of subqueries and conditions
+- One statement per block, separated by blank lines
+
+Configurable rules in `settings.yaml`:
+
+```yaml
+format_rules:
+  select_star_inline: true   # Keep SELECT * on one line
+  keyword_case: upper        # upper, lower, or preserve
+  indent_width: 2            # Spaces per indent level
+```
+
+The formatter is powered by sqlglot with MySQL dialect awareness.
+
+---
+
 # Result Rendering
 
 Query results are displayed as formatted tables.
@@ -287,6 +316,30 @@ The SQL Workspace belongs to the current application session.
 Its contents are not restored after reconnecting or restarting the application.
 
 This behavior intentionally matches the workflow of the traditional MySQL client.
+
+---
+
+# Keybindings
+
+The following keybindings are available in the SQL Workspace:
+
+| Key | Action |
+|-----|--------|
+| F5 | Execute SQL (selected text or all) |
+| F7 | EXPLAIN (tree format) |
+| Shift+F7 | EXPLAIN FORMAT=JSON |
+| F8 | EXPLAIN ANALYZE |
+| Ctrl+Shift+F | Format SQL |
+| Ctrl+S | Save SQL file |
+| Ctrl+O | Open SQL file |
+| Ctrl+L | Clear results |
+| Ctrl+R | Cycle row display limit |
+| Ctrl+Shift+S | Save session log |
+| F6 | Switch focus (editor / results) |
+| F10 | Exit application |
+| Esc | Back to Object Browser |
+
+All keybindings work regardless of which panel has focus.
 
 ---
 

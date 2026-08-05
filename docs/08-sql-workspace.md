@@ -352,6 +352,7 @@ The following keybindings are available in the SQL Workspace:
 | Ctrl+O | Open SQL file |
 | Ctrl+L | Clear results |
 | Ctrl+E | Export last result set |
+| Ctrl+Shift+E | Direct export (stream to file) |
 | Ctrl+R | Cycle row display limit |
 | Ctrl+Shift+S | Save session log |
 | F6 | Switch focus (editor / results) |

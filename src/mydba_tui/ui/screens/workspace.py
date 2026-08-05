@@ -65,6 +65,10 @@ class WorkspaceScreen(Screen[None]):
             key_display="^E", priority=True,
         ),
         Binding(
+            "ctrl+shift+e", "direct_export", "Direct Export",
+            key_display="^⇧E", priority=True,
+        ),
+        Binding(
             "ctrl+r", "cycle_row_limit", "Row Limit",
             key_display="^R", priority=True,
         ),
@@ -675,7 +679,7 @@ class WorkspaceScreen(Screen[None]):
         col_names, rows = self._results_store[-1]
 
         try:
-            exporter = exporter_cls()  # type: ignore[abstract]
+            exporter = exporter_cls()
             count = export_result_set(col_names, rows, path, exporter)
             self.notify(f"Exported {count:,} rows to {path}")
         except FileExistsError:
@@ -685,6 +689,147 @@ class WorkspaceScreen(Screen[None]):
             )
         except Exception as e:
             self.notify(f"Export failed: {e}", severity="error")
+
+    # --- Direct Export (stream to file) ---
+
+    def action_direct_export(self) -> None:
+        """Execute query and stream results directly to a file."""
+        sql = self._get_sql_to_execute()
+        if not sql.strip():
+            self.notify("No SQL to export.", severity="warning")
+            return
+        self._direct_export_sql = sql
+        self.app.push_screen(
+            _ExportFormatScreen(self._do_direct_export_format),
+        )
+
+    def _do_direct_export_format(self, fmt: str) -> None:
+        """Handle format selection for direct export."""
+        if not fmt:
+            return
+        self._direct_export_format = fmt
+        self.app.push_screen(
+            _FilePromptScreen(
+                f"Direct export as {fmt.upper()} — save to:",
+                self._do_direct_export_to_file,
+            ),
+        )
+
+    def _do_direct_export_to_file(self, path_str: str) -> None:
+        """Execute and stream results directly to file."""
+        if not path_str:
+            return
+
+        path = Path(path_str)
+        if path.exists():
+            self.notify(
+                f"File already exists: {path}. Choose another name.",
+                severity="error",
+            )
+            return
+
+        sql = getattr(self, "_direct_export_sql", "")
+        fmt = getattr(self, "_direct_export_format", "csv")
+
+        self._append_status("Direct export: executing...")
+        self.run_worker(
+            lambda: self._direct_export_thread(sql, path, fmt),
+            name="direct_export",
+            exclusive=True,
+            thread=True,
+        )
+
+    def _direct_export_thread(self, sql: str, path: Path, fmt: str) -> None:
+        """Execute query and stream rows to file (runs in thread)."""
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.exporters import EXPORTERS
+        from mydba_tui.logging import log_sql
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            self.app.call_from_thread(self._remove_status)
+            self.app.call_from_thread(
+                self._append_error, "Not connected to a database."
+            )
+            return
+
+        exporter_cls = EXPORTERS.get(fmt)
+        if not exporter_cls:
+            self.app.call_from_thread(self._remove_status)
+            self.app.call_from_thread(
+                self._append_error, f"Unknown format: {fmt}"
+            )
+            return
+
+        start = _time.perf_counter()
+        try:
+            # Use unbuffered cursor for streaming
+            cursor = conn_result.connection.cursor(buffered=False)
+            cursor.execute(sql)
+
+            duration_exec = _time.perf_counter() - start
+            log_sql(sql, duration_exec, "workspace.direct_export")
+
+            if not cursor.description:
+                cursor.close()
+                self.app.call_from_thread(self._remove_status)
+                self.app.call_from_thread(
+                    self._append_error,
+                    "Query did not return a result set.",
+                    sql,
+                )
+                return
+
+            col_names = [desc[0] for desc in cursor.description]
+            exporter = exporter_cls()
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            row_count = 0
+
+            with path.open("w", encoding="utf-8", newline="") as f:
+                exporter.initialize(f, col_names)
+
+                for row in cursor:  # type: ignore[union-attr]
+                    exporter.write_row(row)
+                    row_count += 1
+                    if row_count % 10000 == 0:
+                        self.app.call_from_thread(
+                            self._update_status,
+                            f"Exporting: {row_count:,} rows...",
+                        )
+
+                exporter.finalize()
+
+            cursor.close()
+            duration_total = _time.perf_counter() - start
+
+            self.app.call_from_thread(self._remove_status)
+
+            from rich.markup import escape as rich_escape
+
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            msg = (
+                f"[bold]── {ts} ──[/bold]\n"
+                f"[dim]{rich_escape(sql)};[/dim]\n\n"
+                f"[bold]Direct export complete:[/bold]\n"
+                f"  Rows: {row_count:,}\n"
+                f"  Format: {exporter_cls.name}\n"
+                f"  File: {path}\n"
+                f"  Duration: {duration_total:.3f}s\n"
+            )
+            self.app.call_from_thread(self._append_direct_export_result, msg)
+
+        except Exception as e:
+            self.app.call_from_thread(self._remove_status)
+            self.app.call_from_thread(
+                self._append_error, str(e), sql
+            )
+
+    def _append_direct_export_result(self, msg: str) -> None:
+        """Show direct export result in the results panel."""
+        panel = self.query_one("#results-panel", ScrollableContainer)
+        panel.mount(Static(msg, classes="result-block"))
+        panel.scroll_end()
 
     def action_cycle_row_limit(self) -> None:
         """Cycle through row display limits."""
@@ -1472,16 +1617,18 @@ class _FilePromptScreen(Screen[str]):
         self._prompt = prompt
         self._callback = callback
         self._start_dir = start_dir
+        self._current_dir: Path = Path(start_dir).expanduser()
 
     def compose(self) -> ComposeResult:
         from textual.widgets import DirectoryTree
 
         with Vertical(id="file-dialog"):
             yield Static(self._prompt)
-            yield DirectoryTree(Path(self._start_dir).expanduser(), id="file-tree")
+            yield DirectoryTree(self._current_dir, id="file-tree")
             yield Input(
                 placeholder="Enter file path or select above...",
                 id="file-path-input",
+                value=str(self._current_dir) + "/",
             )
 
     def on_mount(self) -> None:
@@ -1491,15 +1638,35 @@ class _FilePromptScreen(Screen[str]):
     def on_directory_tree_file_selected(
         self, event: Any
     ) -> None:
-        """When a file is selected in the tree, put its path in the input."""
+        """When a file is selected in the tree, put its full path in the input."""
         inp = self.query_one("#file-path-input", Input)
         inp.value = str(event.path)
+
+    def on_directory_tree_directory_selected(
+        self, event: Any
+    ) -> None:
+        """When a directory is selected, update the input with the directory path."""
+        self._current_dir = Path(event.path)
+        inp = self.query_one("#file-path-input", Input)
+        # Only update if user hasn't typed a full path
+        current_val = inp.value.strip()
+        if not current_val or current_val.endswith("/"):
+            inp.value = str(self._current_dir) + "/"
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key in the input field."""
         path = event.value.strip()
-        self.dismiss(path)
-        self._callback(path)
+        if not path:
+            return
+
+        # If path is not absolute, prepend the current directory
+        p = Path(path)
+        if not p.is_absolute():
+            p = self._current_dir / p
+
+        result = str(p)
+        self.dismiss(result)
+        self._callback(result)
 
     def action_cancel(self) -> None:
         """Cancel without action."""

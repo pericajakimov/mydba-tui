@@ -68,6 +68,10 @@ class WorkspaceScreen(Screen[None]):
             key_display="^⇧S", priority=True,
         ),
         Binding(
+            "ctrl+shift+f", "format_sql", "Format",
+            key_display="^⇧F", priority=True,
+        ),
+        Binding(
             "f6", "switch_focus", "Switch Panel",
             key_display="F6", priority=True,
         ),
@@ -646,6 +650,48 @@ class WorkspaceScreen(Screen[None]):
         except Exception as e:
             self.notify(f"Save log failed: {e}", severity="error")
 
+    def action_format_sql(self) -> None:
+        """Format SQL in the editor using sqlglot (MySQL dialect).
+
+        Formats selected text if any, otherwise formats entire editor contents.
+        Applies configurable post-processing rules from settings.
+        """
+        import sqlglot
+
+        editor = self.query_one("#sql-editor", TextArea)
+        selected = editor.selected_text
+        has_selection = bool(selected and selected.strip())
+        sql = selected if has_selection else editor.text
+
+        if not sql.strip():
+            return
+
+        try:
+            formatted = sqlglot.transpile(
+                sql.strip(), read="mysql", write="mysql", pretty=True
+            )
+            result = ";\n\n".join(formatted)
+            if not result.endswith(";"):
+                result += ";"
+
+            # Apply post-processing rules
+            result = _apply_format_rules(result, self.app)
+
+            if has_selection:
+                # Replace only the selected text
+                start, end = editor.selection
+                if start > end:
+                    start, end = end, start
+                editor.replace(result, start, end)
+            else:
+                # Replace all content
+                editor.clear()
+                editor.insert(result)
+
+            self.notify("SQL formatted.")
+        except Exception as e:
+            self.notify(f"Format failed: {e}", severity="error")
+
     def action_go_back(self) -> None:
         """Exit workspace and clean up session log if not saved."""
         self._cleanup_session_log()
@@ -655,6 +701,51 @@ class WorkspaceScreen(Screen[None]):
         """Exit the application."""
         self._cleanup_session_log()
         self.app.exit()
+
+
+def _apply_format_rules(sql: str, app: Any) -> str:
+    """Apply configurable post-processing rules to formatted SQL.
+
+    Rules are read from app.settings.format_rules (dict) if available.
+    Supported rules:
+        select_star_inline (bool): Keep SELECT * on one line. Default: true.
+        keyword_case (str): 'upper', 'lower', 'preserve'. Default: 'upper'.
+        indent_width (int): Spaces per indent. Default: 2 (sqlglot default).
+    """
+    rules = getattr(getattr(app, "settings", None), "format_rules", None)
+    if rules is None:
+        rules = {}
+
+    # Rule: select_star_inline (default: true)
+    if rules.get("select_star_inline", True):
+        sql = re.sub(r"SELECT\s*\n\s+\*", "SELECT *", sql, flags=re.IGNORECASE)
+
+    # Rule: keyword_case
+    case = rules.get("keyword_case", "upper")
+    if case == "lower":
+        from mydba_tui.ui.mysql_highlight import _FLOW_KEYWORDS, _KEYWORDS
+
+        all_kw = _KEYWORDS | _FLOW_KEYWORDS
+        for kw in sorted(all_kw, key=len, reverse=True):
+            sql = re.sub(
+                rf"\b{kw}\b", kw.lower(), sql, flags=re.IGNORECASE
+            )
+
+    # Rule: indent_width (post-process indentation)
+    indent_width = rules.get("indent_width", 2)
+    if indent_width != 2:
+        lines = sql.split("\n")
+        adjusted = []
+        for line in lines:
+            stripped = line.lstrip()
+            current_indent = len(line) - len(stripped)
+            # Convert from 2-space to target width
+            indent_level = current_indent // 2
+            new_indent = " " * (indent_level * indent_width)
+            adjusted.append(new_indent + stripped)
+        sql = "\n".join(adjusted)
+
+    return sql
 
 
 def _format_cell(val: Any) -> str:

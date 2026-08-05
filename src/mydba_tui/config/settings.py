@@ -7,6 +7,7 @@ in settings.yaml. The settings file is created with defaults on first run.
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -32,6 +33,7 @@ class Settings:
         refresh_interval: Monitoring refresh interval in seconds.
         export_format: Default export format (csv, tsv, sql, jsonl).
         result_format: Result table style ('mysql' for bordered, 'simple' for plain).
+        format_rules: SQL formatter configuration rules.
     """
 
     theme: str = DEFAULT_THEME
@@ -40,6 +42,15 @@ class Settings:
     refresh_interval: int = DEFAULT_REFRESH_INTERVAL
     export_format: str = DEFAULT_EXPORT_FORMAT
     result_format: str = DEFAULT_RESULT_FORMAT
+    format_rules: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.format_rules is None:
+            self.format_rules = {
+                "select_star_inline": True,
+                "keyword_case": "upper",
+                "indent_width": 2,
+            }
 
 
 def load_settings(path: Path | None = None) -> Settings:
@@ -71,6 +82,7 @@ def load_settings(path: Path | None = None) -> Settings:
         refresh_interval=data.get("refresh_interval", DEFAULT_REFRESH_INTERVAL),
         export_format=data.get("export_format", DEFAULT_EXPORT_FORMAT),
         result_format=data.get("result_format", DEFAULT_RESULT_FORMAT),
+        format_rules=data.get("format_rules", None),
     )
 
 
@@ -114,6 +126,16 @@ def save_settings(settings: Settings, path: Path | None = None) -> None:
         "# result_format: Table format for SQL Workspace query results.",
         "#   Values: mysql (bordered +---+ style), simple (plain dashes)",
         f"result_format: {settings.result_format}",
+        "",
+        "# format_rules: SQL formatter configuration (Ctrl+Shift+F).",
+        "#   select_star_inline: Keep SELECT * on one line (true/false)",
+        "#   keyword_case: Keyword casing (upper, lower, preserve)",
+        "#   indent_width: Spaces per indent level (integer)",
+        "format_rules:",
+        f"  select_star_inline: "
+        f"{str((settings.format_rules or {}).get('select_star_inline', True)).lower()}",
+        f"  keyword_case: {(settings.format_rules or {}).get('keyword_case', 'upper')}",
+        f"  indent_width: {(settings.format_rules or {}).get('indent_width', 2)}",
         "",
     ]
 

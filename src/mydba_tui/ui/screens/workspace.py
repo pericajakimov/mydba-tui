@@ -233,7 +233,7 @@ class WorkspaceScreen(Screen[None]):
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         entry = (
-            f"-- [{ts}] ({duration:.3f}s)\n"
+            f"-- [{ts}] ({_format_duration(duration)})\n"
             f"{sql};\n\n"
             f"{result_text}\n\n"
         )
@@ -473,7 +473,7 @@ class WorkspaceScreen(Screen[None]):
             )
         else:
             row_label = f"{displayed:,} row{'s' if displayed != 1 else ''}"
-        summary = f"{row_label} ({duration:.3f}s)"
+        summary = f"{row_label} ({_format_duration(duration)})"
 
         # Header (with markup): timestamp + SQL
         header_lines: list[str] = []
@@ -540,7 +540,7 @@ class WorkspaceScreen(Screen[None]):
         content = (
             f"[bold]── {ts} ──[/bold]\n"
             f"[dim]{rich_escape(sql)};[/dim]\n\n"
-            f"[bold]{message} ({duration:.3f}s)[/bold]\n"
+            f"[bold]{message} ({_format_duration(duration)})[/bold]\n"
         )
         panel.mount(Static(content, classes="result-block"))
         panel.scroll_end()
@@ -815,7 +815,7 @@ class WorkspaceScreen(Screen[None]):
                 f"  Rows: {row_count:,}\n"
                 f"  Format: {exporter_cls.name}\n"
                 f"  File: {path}\n"
-                f"  Duration: {duration_total:.3f}s\n"
+                f"  Duration: {_format_duration(duration_total)}\n"
             )
             self.app.call_from_thread(self._append_direct_export_result, msg)
 
@@ -1155,6 +1155,24 @@ def _get_word_at_cursor(text_before_cursor: str) -> str:
     while i >= 0 and (text_before_cursor[i].isalnum() or text_before_cursor[i] == "_"):
         i -= 1
     return text_before_cursor[i + 1:]
+
+
+def _format_duration(seconds: float) -> str:
+    """Format a duration in human-readable form.
+
+    < 60s: show with millisecond precision (e.g., "1.234s")
+    >= 60s and < 1h: show as "Xm Ys" (e.g., "2m 34s")
+    >= 1h: show as "Xh Ym Zs" (e.g., "1h 23m 45s")
+    """
+    if seconds < 60:
+        return f"{seconds:.3f}s"
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours}h {mins}m {secs}s"
 
 
 def _is_statement_start(text_before_cursor: str) -> bool:

@@ -351,6 +351,7 @@ The following keybindings are available in the SQL Workspace:
 | Ctrl+S | Save SQL file |
 | Ctrl+O | Open SQL file |
 | Ctrl+L | Clear results |
+| Ctrl+E | Export last result set |
 | Ctrl+R | Cycle row display limit |
 | Ctrl+Shift+S | Save session log |
 | F6 | Switch focus (editor / results) |

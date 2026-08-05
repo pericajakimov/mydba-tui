@@ -61,6 +61,10 @@ class WorkspaceScreen(Screen[None]):
             key_display="^L", priority=True,
         ),
         Binding(
+            "ctrl+e", "export_results", "Export",
+            key_display="^E", priority=True,
+        ),
+        Binding(
             "ctrl+r", "cycle_row_limit", "Row Limit",
             key_display="^R", priority=True,
         ),
@@ -628,6 +632,59 @@ class WorkspaceScreen(Screen[None]):
         )
         self._result_count = 0
         self._results_store.clear()
+
+    def action_export_results(self) -> None:
+        """Export the last result set to a file."""
+        if not self._results_store:
+            self.notify("No results to export.", severity="warning")
+            return
+
+        # Show format selection
+        self.app.push_screen(
+            _ExportFormatScreen(self._do_export),
+        )
+
+    def _do_export(self, fmt: str) -> None:
+        """Handle format selection — prompt for file path."""
+        if not fmt:
+            return
+        self._export_format = fmt
+        self.app.push_screen(
+            _FilePromptScreen(
+                f"Export as {fmt.upper()} — save to:",
+                self._do_export_to_file,
+            ),
+        )
+
+    def _do_export_to_file(self, path_str: str) -> None:
+        """Perform the actual export to the given path."""
+        if not path_str:
+            return
+
+        from mydba_tui.exporters import EXPORTERS, export_result_set
+
+        fmt = getattr(self, "_export_format", "csv")
+        exporter_cls = EXPORTERS.get(fmt)
+        if not exporter_cls:
+            self.notify(f"Unknown format: {fmt}", severity="error")
+            return
+
+        path = Path(path_str)
+
+        # Get the last result set
+        col_names, rows = self._results_store[-1]
+
+        try:
+            exporter = exporter_cls()  # type: ignore[abstract]
+            count = export_result_set(col_names, rows, path, exporter)
+            self.notify(f"Exported {count:,} rows to {path}")
+        except FileExistsError:
+            self.notify(
+                f"File already exists: {path}. Choose another name.",
+                severity="error",
+            )
+        except Exception as e:
+            self.notify(f"Export failed: {e}", severity="error")
 
     def action_cycle_row_limit(self) -> None:
         """Cycle through row display limits."""
@@ -1308,6 +1365,74 @@ def _build_vertical_plain(col_names: list[str], rows: list[Any]) -> list[str]:
             lines.append(f"{name:>{max_name_len}}: {_format_cell(val)}")
         lines.append("")
     return lines
+
+
+class _ExportFormatScreen(Screen[str]):
+    """Modal dialog for selecting export format."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    DEFAULT_CSS = """
+    _ExportFormatScreen {
+        align: center middle;
+        background: $background 80%;
+    }
+
+    #export-format-container {
+        width: 40;
+        height: auto;
+        border: solid $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+
+    .format-option {
+        padding: 0 1;
+        margin-bottom: 0;
+    }
+
+    .format-option:hover {
+        background: $accent;
+    }
+    """
+
+    def __init__(self, callback: Any) -> None:
+        super().__init__()
+        self._callback = callback
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import OptionList
+
+        from mydba_tui.exporters import EXPORTERS
+
+        with Vertical(id="export-format-container"):
+            yield Static("[bold]Export format:[/bold]\n")
+            options = [
+                EXPORTERS[key].name for key in sorted(EXPORTERS.keys())
+            ]
+            yield OptionList(*options, id="format-list")
+
+    def on_mount(self) -> None:
+        """Focus the list."""
+        from textual.widgets import OptionList
+
+        self.query_one("#format-list", OptionList).focus()
+
+    def on_option_list_option_selected(self, event: Any) -> None:
+        """Handle format selection."""
+        from mydba_tui.exporters import EXPORTERS
+
+        keys = sorted(EXPORTERS.keys())
+        idx = event.option_index
+        if 0 <= idx < len(keys):
+            self.dismiss(keys[idx])
+            self._callback(keys[idx])
+
+    def action_cancel(self) -> None:
+        """Cancel export."""
+        self.dismiss("")
 
 
 class _FilePromptScreen(Screen[str]):

@@ -250,6 +250,7 @@ class WorkspaceScreen(Screen[None]):
                 self._session_log_path.unlink(missing_ok=True)
             except Exception:
                 pass
+            self._session_log_path = None
 
     # --- Execution ---
 
@@ -478,7 +479,7 @@ class WorkspaceScreen(Screen[None]):
         # Header (with markup): timestamp + SQL
         header_lines: list[str] = []
         header_lines.append(f"[bold]── {ts} ──[/bold]")
-        header_lines.append(f"[dim]{rich_escape(sql)};[/dim]")
+        header_lines.append(f"[dim]{rich_escape(sql.rstrip(';'))};[/dim]")
 
         panel.mount(Static("\n".join(header_lines), classes="result-block"))
 
@@ -539,7 +540,7 @@ class WorkspaceScreen(Screen[None]):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         content = (
             f"[bold]── {ts} ──[/bold]\n"
-            f"[dim]{rich_escape(sql)};[/dim]\n\n"
+            f"[dim]{rich_escape(sql.rstrip(';'))};[/dim]\n\n"
             f"[bold]{message} ({_format_duration(duration)})[/bold]\n"
         )
         panel.mount(Static(content, classes="result-block"))
@@ -553,7 +554,7 @@ class WorkspaceScreen(Screen[None]):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lines: list[str] = [f"[bold]── {ts} ──[/bold]"]
         if sql:
-            lines.append(f"[dim]{rich_escape(sql)};[/dim]")
+            lines.append(f"[dim]{rich_escape(sql.rstrip(';'))};[/dim]")
             lines.append("")
         lines.append(
             f"[bold red]ERROR:[/bold red] [red]{rich_escape(error)}[/red]"
@@ -698,6 +699,7 @@ class WorkspaceScreen(Screen[None]):
         if not sql.strip():
             self.notify("No SQL to export.", severity="warning")
             return
+        self._ensure_session_log()
         self._direct_export_sql = sql
         self.app.push_screen(
             _ExportFormatScreen(self._do_direct_export_format),
@@ -810,7 +812,7 @@ class WorkspaceScreen(Screen[None]):
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             msg = (
                 f"[bold]── {ts} ──[/bold]\n"
-                f"[dim]{rich_escape(sql)};[/dim]\n\n"
+                f"[dim]{rich_escape(sql.rstrip(';'))};[/dim]\n\n"
                 f"[bold]Direct export complete:[/bold]\n"
                 f"  Rows: {row_count:,}\n"
                 f"  Format: {exporter_cls.name}\n"
@@ -818,6 +820,14 @@ class WorkspaceScreen(Screen[None]):
                 f"  Duration: {_format_duration(duration_total)}\n"
             )
             self.app.call_from_thread(self._append_direct_export_result, msg)
+
+            # Log to session
+            log_text = (
+                f"Direct export: {row_count:,} rows to {path}\n"
+                f"Format: {exporter_cls.name}\n"
+                f"Duration: {_format_duration(duration_total)}"
+            )
+            self._log_to_session(sql, log_text, duration_total)
 
         except Exception as e:
             self.app.call_from_thread(self._remove_status)
@@ -1135,7 +1145,7 @@ class WorkspaceScreen(Screen[None]):
                 return
         except Exception:
             pass
-        self._cleanup_session_log()
+        # Don't delete session log — it persists across workspace visits
         self.app.pop_screen()
 
     def action_quit(self) -> None:

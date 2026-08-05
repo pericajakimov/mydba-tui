@@ -25,6 +25,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Input, Static, TextArea
 
 from mydba_tui.ui.widgets import StatusBar
+from mydba_tui.ui.widgets.sql_editor import SQLEditor
 
 _SESSIONS_DIR = Path.home() / ".config" / "mydba" / "logs" / "sessions"
 
@@ -129,11 +130,7 @@ class WorkspaceScreen(Screen[None]):
         yield StatusBar(id="status-bar")
 
         with Vertical(id="workspace-layout"):
-            yield TextArea.code_editor(
-                "",
-                language="sql",
-                id="sql-editor",
-            )
+            yield SQLEditor(id="sql-editor")
             yield ScrollableContainer(
                 Static(
                     "[dim]Press F5 to execute SQL. "
@@ -150,7 +147,8 @@ class WorkspaceScreen(Screen[None]):
         from mydba_tui.ui.sql_theme import SQL_THEME, SQL_THEME_NAME
 
         self._sync_status_bar()
-        editor = self.query_one("#sql-editor", TextArea)
+        sql_editor = self.query_one("#sql-editor", SQLEditor)
+        editor = sql_editor.editor
         editor.register_theme(SQL_THEME)
         editor.theme = SQL_THEME_NAME
         editor.focus()
@@ -158,6 +156,17 @@ class WorkspaceScreen(Screen[None]):
     def on_screen_resume(self) -> None:
         """Update status bar when returning to this screen."""
         self._sync_status_bar()
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Trigger autocomplete on typing in the SQL editor."""
+        if event.text_area.id != "sql-editor-inner":
+            return
+        # Skip if we just accepted a completion (prevents re-trigger loop)
+        sql_editor = self.query_one("#sql-editor", SQLEditor)
+        if sql_editor._skip_next_trigger:
+            sql_editor._skip_next_trigger = False
+            return
+        self._trigger_autocomplete()
 
     def _sync_status_bar(self) -> None:
         """Sync status bar with current connection state."""
@@ -270,7 +279,7 @@ class WorkspaceScreen(Screen[None]):
 
     def _get_sql_to_execute(self) -> str:
         """Get SQL text: selected text if any, otherwise full editor contents."""
-        editor = self.query_one("#sql-editor", TextArea)
+        editor = self.query_one("#sql-editor", SQLEditor).editor
         selected = editor.selected_text
         if selected and selected.strip():
             return selected
@@ -550,7 +559,7 @@ class WorkspaceScreen(Screen[None]):
 
     def action_save_file(self) -> None:
         """Save editor contents to a file."""
-        editor = self.query_one("#sql-editor", TextArea)
+        editor = self.query_one("#sql-editor", SQLEditor).editor
         text = editor.text
 
         if not text.strip():
@@ -572,7 +581,7 @@ class WorkspaceScreen(Screen[None]):
         """Perform the save operation."""
         if not path:
             return
-        editor = self.query_one("#sql-editor", TextArea)
+        editor = self.query_one("#sql-editor", SQLEditor).editor
         try:
             Path(path).write_text(editor.text, encoding="utf-8")
             self._file_path = path
@@ -592,7 +601,7 @@ class WorkspaceScreen(Screen[None]):
             return
         try:
             text = Path(path).read_text(encoding="utf-8")
-            editor = self.query_one("#sql-editor", TextArea)
+            editor = self.query_one("#sql-editor", SQLEditor).editor
             editor.clear()
             editor.insert(text)
             self._file_path = path
@@ -606,7 +615,7 @@ class WorkspaceScreen(Screen[None]):
         """Switch focus between editor and results panel."""
         self._focus_on_editor = not self._focus_on_editor
         if self._focus_on_editor:
-            self.query_one("#sql-editor", TextArea).focus()
+            self.query_one("#sql-editor", SQLEditor).editor.focus()
         else:
             self.query_one("#results-panel", ScrollableContainer).focus()
 
@@ -658,7 +667,7 @@ class WorkspaceScreen(Screen[None]):
         """
         import sqlglot
 
-        editor = self.query_one("#sql-editor", TextArea)
+        editor = self.query_one("#sql-editor", SQLEditor).editor
         selected = editor.selected_text
         has_selection = bool(selected and selected.strip())
         sql = selected if has_selection else editor.text
@@ -692,8 +701,238 @@ class WorkspaceScreen(Screen[None]):
         except Exception as e:
             self.notify(f"Format failed: {e}", severity="error")
 
+    def _trigger_autocomplete(self) -> None:
+        """Show SQL autocomplete suggestions at the cursor."""
+        from mydba_tui.ui.mysql_autocomplete import (
+            get_completions,
+            get_completions_after_dot,
+        )
+
+        sql_editor = self.query_one("#sql-editor", SQLEditor)
+        editor = sql_editor.editor
+
+        # Get the current word being typed
+        cursor_row, cursor_col = editor.cursor_location
+        line = str(editor.get_line(cursor_row))
+        text_before = line[:cursor_col]
+
+        # Detect dot completion (schema.object or table.column)
+        dot_match = _DOT_PATTERN.search(text_before)
+        prefix = ""
+        if dot_match:
+            name_before_dot = dot_match.group(1)
+            prefix_after_dot = dot_match.group(2) or ""
+
+            # First check if it's a schema name → suggest objects from that schema
+            schema_objects = self._get_schema_objects_cache()
+            schemas = (schema_objects or {}).get("schemas", [])
+            if name_before_dot in schemas or name_before_dot.lower() in [
+                s.lower() for s in schemas
+            ]:
+                # It's schema.object completion
+                objects = self._get_schema_objects_for(name_before_dot)
+                upper_prefix = prefix_after_dot.upper()
+                from mydba_tui.ui.mysql_autocomplete import (
+                    CompletionItem,
+                    CompletionKind,
+                )
+
+                items = [
+                    CompletionItem(text=obj, kind=CompletionKind.TABLE)
+                    for obj in objects
+                    if obj.upper().startswith(upper_prefix)
+                ][:50]
+            else:
+                # It's table.column completion
+                table_columns = self._get_table_columns_cache()
+                items = get_completions_after_dot(
+                    name_before_dot, table_columns, prefix_after_dot
+                )
+        else:
+            # Get word prefix — need at least 2 chars to trigger
+            prefix = _get_word_at_cursor(text_before)
+            if not prefix or len(prefix) < 2:
+                sql_editor.hide_completions()
+                return
+
+            # Get schema objects from app
+            schema_objects = self._get_schema_objects_cache()
+            table_columns = self._get_table_columns_cache()
+            current_table = self._detect_current_table(editor.text, cursor_row)
+            # Detect if we're at the start of a statement
+            at_start = _is_statement_start(text_before)
+            items = get_completions(
+                prefix, schema_objects, table_columns, current_table,
+                at_statement_start=at_start,
+            )
+
+        if not items:
+            sql_editor.hide_completions()
+            return
+
+        # If the typed word exactly matches the only suggestion, hide
+        typed = (dot_match.group(2) or "") if dot_match else prefix
+        if len(items) == 1 and items[0].text.upper() == typed.upper():
+            sql_editor.hide_completions()
+            return
+
+        # Show completions
+        display_items = [item.display for item in items]
+        insert_texts = [item.text for item in items]
+        kinds = [item.kind.value for item in items]
+        sql_editor.show_completions(display_items, insert_texts, kinds)
+
+    def _get_schema_objects_cache(self) -> dict[str, list[str]] | None:
+        """Get schema objects for autocomplete.
+
+        Returns dict with keys:
+            schemas: all schema names
+            tables: tables in current schema
+            views: views in current schema
+            procedures: procedures in current schema
+            functions: functions in current schema
+        Also stores per-schema cache in app._schema_objects_map.
+        """
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None:
+            return None
+
+        existing = getattr(self.app, "_autocomplete_cache", None)
+        if existing:
+            return existing  # type: ignore[no-any-return]
+
+        try:
+            from mydba_tui.connection import ConnectionResult
+
+            if not isinstance(conn_result, ConnectionResult):
+                return None
+
+            cursor = conn_result.connection.cursor(buffered=True)
+
+            # Get all schema names
+            cursor.execute("SELECT schema_name FROM information_schema.schemata")
+            schemas = [str(r[0]) for r in cursor.fetchall()]  # type: ignore[index]
+
+            # Get current database
+            cursor.execute("SELECT DATABASE()")
+            row = cursor.fetchone()
+            current_db = str(row[0]) if row and row[0] else ""  # type: ignore[index]
+
+            # Get tables/views in current db
+            tables: list[str] = []
+            views: list[str] = []
+            if current_db:
+                cursor.execute(
+                    "SELECT table_name, table_type "
+                    "FROM information_schema.tables "
+                    f"WHERE table_schema = '{current_db}'"
+                )
+                for r in cursor.fetchall():
+                    name = str(r[0])  # type: ignore[index]
+                    if r[1] == "BASE TABLE":  # type: ignore[index]
+                        tables.append(name)
+                    else:
+                        views.append(name)
+
+            # Get procedures/functions in current db
+            procs: list[str] = []
+            funcs: list[str] = []
+            if current_db:
+                cursor.execute(
+                    "SELECT routine_name, routine_type "
+                    "FROM information_schema.routines "
+                    f"WHERE routine_schema = '{current_db}'"
+                )
+                for r in cursor.fetchall():
+                    name = str(r[0])  # type: ignore[index]
+                    if r[1] == "PROCEDURE":  # type: ignore[index]
+                        procs.append(name)
+                    else:
+                        funcs.append(name)
+
+            cursor.close()
+
+            cache: dict[str, list[str]] = {
+                "schemas": schemas,
+                "tables": tables,
+                "views": views,
+                "procedures": procs,
+                "functions": funcs,
+            }
+            self.app._autocomplete_cache = cache  # type: ignore[attr-defined]
+            self.app._autocomplete_current_db = current_db  # type: ignore[attr-defined]
+            return cache
+        except Exception:
+            return None
+
+    def _get_schema_objects_for(self, schema: str) -> list[str]:
+        """Get objects (tables/views/routines) for a specific schema."""
+        # Check per-schema cache
+        schema_map = getattr(self.app, "_schema_objects_map", None)
+        if schema_map and schema in schema_map:
+            return schema_map[schema]  # type: ignore[no-any-return]
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None:
+            return []
+
+        try:
+            from mydba_tui.connection import ConnectionResult
+
+            if not isinstance(conn_result, ConnectionResult):
+                return []
+
+            cursor = conn_result.connection.cursor(buffered=True)
+            cursor.execute(
+                "SELECT table_name FROM information_schema.tables "
+                f"WHERE table_schema = '{schema}' "
+                "UNION "
+                "SELECT routine_name FROM information_schema.routines "
+                f"WHERE routine_schema = '{schema}'"
+            )
+            objects = [str(r[0]) for r in cursor.fetchall()]  # type: ignore[index]
+            cursor.close()
+
+            # Cache it
+            if not schema_map:
+                schema_map = {}
+            schema_map[schema] = objects
+            self.app._schema_objects_map = schema_map  # type: ignore[attr-defined]
+            return objects
+        except Exception:
+            return []
+
+    def _get_table_columns_cache(self) -> dict[str, list[str]] | None:
+        """Get table→columns mapping from cached data."""
+        return getattr(self.app, "_column_cache", None)
+
+    def _detect_current_table(self, sql: str, cursor_row: int) -> str | None:
+        """Try to detect the current table context from SQL near cursor."""
+        # Simple heuristic: look for FROM/JOIN table_name near cursor
+        lines = sql.split("\n")
+        # Look backwards from cursor for FROM/JOIN
+        for i in range(cursor_row, max(cursor_row - 10, -1), -1):
+            if i < len(lines):
+                line_upper = lines[i].upper()
+                for kw in ("FROM ", "JOIN ", "UPDATE ", "INTO "):
+                    pos = line_upper.find(kw)
+                    if pos >= 0:
+                        # Extract table name after keyword
+                        after = lines[i][pos + len(kw):].strip()
+                        table = after.split()[0].strip("`") if after else ""
+                        if table:
+                            return table
+        return None
+
     def action_go_back(self) -> None:
-        """Exit workspace and clean up session log if not saved."""
+        """Exit workspace (or dismiss completions if visible)."""
+        try:
+            sql_editor = self.query_one("#sql-editor", SQLEditor)
+            if sql_editor.popup.is_visible:
+                sql_editor.hide_completions()
+                return
+        except Exception:
+            pass
         self._cleanup_session_log()
         self.app.pop_screen()
 
@@ -701,6 +940,40 @@ class WorkspaceScreen(Screen[None]):
         """Exit the application."""
         self._cleanup_session_log()
         self.app.exit()
+
+
+# --- Autocomplete helpers ---
+
+_DOT_PATTERN = re.compile(r"`?(\w+)`?\.\s*`?(\w*)$")
+
+
+def _get_word_at_cursor(text_before_cursor: str) -> str:
+    """Extract the word being typed at the cursor position."""
+    i = len(text_before_cursor) - 1
+    while i >= 0 and (text_before_cursor[i].isalnum() or text_before_cursor[i] == "_"):
+        i -= 1
+    return text_before_cursor[i + 1:]
+
+
+def _is_statement_start(text_before_cursor: str) -> bool:
+    """Check if cursor is at the start of a SQL statement.
+
+    Returns True if there are no previous keywords on the current line
+    (just whitespace or nothing before the prefix).
+    """
+    # Strip the current word being typed
+    stripped = text_before_cursor.rstrip()
+    # Remove trailing word chars (the prefix being typed)
+    i = len(stripped) - 1
+    while i >= 0 and (stripped[i].isalnum() or stripped[i] == "_"):
+        i -= 1
+    before_word = stripped[: i + 1].strip()
+    # At statement start if nothing meaningful before, or after ; or blank line
+    if not before_word:
+        return True
+    if before_word.endswith(";"):
+        return True
+    return False
 
 
 def _apply_format_rules(sql: str, app: Any) -> str:

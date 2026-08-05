@@ -303,9 +303,27 @@ No Python logging messages appear in the SQL log.
 
 # Autocomplete
 
-SQL autocomplete is planned for a future version.
+SQL autocomplete triggers automatically while typing (after 2+ characters).
 
-The initial implementation focuses on providing a stable and predictable editing experience.
+Completion sources:
+
+- MySQL keywords (context-aware: only statement starters at the beginning)
+- MySQL built-in functions (200+)
+- MySQL data types
+- Schema names (all schemas on the server)
+- Tables, views, procedures, functions from the current database
+- Objects from a specific schema after typing `schema_name.`
+
+Behavior:
+
+- Popup appears below the cursor (or above if near the editor bottom)
+- Tab or Enter accepts the highlighted suggestion
+- Up/Down arrows navigate the list
+- Esc dismisses the popup
+- Typing continues to filter results in real-time
+- Space is added automatically after keywords (not after object names)
+
+The metadata cache is built on first trigger and reused within the session.
 
 ---
 

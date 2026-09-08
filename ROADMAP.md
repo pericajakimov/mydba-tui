@@ -39,8 +39,8 @@ Implemented:
 In progress / next:
 
 - Administration — tabbed screen with Process List (live, filterable, kill
-  sessions, open query in workspace), Variables, and Status (filterable
-  key/value views); Users, Replication, Locks next
+  sessions, open query in workspace), Connections (grouped counts), Variables,
+  and Status; Transactions, Locks, Users, Replication next
 - Monitoring (server activity, live metrics, lightweight graphs)
 - Polish (performance, rendering, error handling, additional themes)
 
@@ -107,6 +107,7 @@ In progress / next:
 ## Milestone 5 — Administration 🚧 In progress
 
 - Process List ✅
+- Connections ✅
 - Variables ✅
 - Status ✅
 - Users

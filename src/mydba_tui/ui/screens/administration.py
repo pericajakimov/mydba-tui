@@ -19,6 +19,7 @@ from textual.screen import ModalScreen, Screen
 from textual.timer import Timer
 from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
 
+from mydba_tui.services.connections import ConnectionStat, fetch_connection_stats
 from mydba_tui.services.processlist import (
     PROCESS_COLUMNS,
     ProcessRow,
@@ -68,6 +69,36 @@ def _format_seconds(seconds: int) -> str:
 def _format_time_field(seconds: int) -> str:
     """Render the Time field as raw seconds plus a human-readable form."""
     return f"{seconds} ({_format_seconds(seconds)})"
+
+
+def _view_is_active_tab(widget: object) -> bool:
+    """Return True if the widget's enclosing TabPane is the active tab.
+
+    Used by live views to skip background auto-refresh (and its DB query) when
+    their tab is not visible. Defaults to True if the structure can't be
+    resolved, so a view never silently stops refreshing.
+    """
+    from textual.widget import Widget
+    from textual.widgets import TabbedContent, TabPane
+
+    if not isinstance(widget, Widget):
+        return True
+    pane: TabPane | None = None
+    node: Widget | None = widget
+    while node is not None:
+        if isinstance(node, TabPane):
+            pane = node
+            break
+        parent = node.parent
+        node = parent if isinstance(parent, Widget) else None
+    if pane is None:
+        return True
+    tabbed = pane.parent
+    while tabbed is not None and not isinstance(tabbed, TabbedContent):
+        tabbed = tabbed.parent
+    if not isinstance(tabbed, TabbedContent):
+        return True
+    return tabbed.active == pane.id
 
 
 def _build_workspace_snippet(proc: ProcessRow) -> str:
@@ -153,7 +184,6 @@ class ProcessListView(Vertical):
         table = self.query_one("#process-table", DataTable)
         for col in PROCESS_COLUMNS:
             table.add_column(col, key=col)
-        table.focus()
 
         self.action_refresh()
 
@@ -168,9 +198,14 @@ class ProcessListView(Vertical):
     # --- Data loading ---
 
     def _on_refresh_tick(self) -> None:
-        """Timer callback — refresh unless paused."""
-        if not self._paused:
-            self.action_refresh()
+        """Timer callback — refresh unless paused and only when this tab is active.
+
+        Background tabs must not query the shared connection; that both wastes
+        the connection and slows the visible tab.
+        """
+        if self._paused or not _view_is_active_tab(self):
+            return
+        self.action_refresh()
 
     def action_refresh(self) -> None:
         """Reload the process list.
@@ -479,6 +514,212 @@ class ProcessListView(Vertical):
             return
         workspace.load_query(text)
         self.app.push_screen("workspace")
+
+
+class ConnectionsView(Vertical):
+    """Connections section — live connection counts grouped by (user, host)."""
+
+    BINDINGS = [
+        Binding("r", "refresh", "Refresh", key_display="R", priority=True),
+        Binding("p", "toggle_pause", "Pause/Resume", key_display="P"),
+        Binding("slash", "filter", "Filter", key_display="/"),
+    ]
+
+    DEFAULT_CSS = """
+    ConnectionsView {
+        height: 1fr;
+    }
+
+    ConnectionsView #conn-info {
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
+    ConnectionsView #conn-table {
+        height: 1fr;
+    }
+
+    ConnectionsView #conn-filter {
+        display: none;
+        dock: bottom;
+        border: tall $accent;
+    }
+
+    ConnectionsView #conn-filter.visible {
+        display: block;
+    }
+    """
+
+    def __init__(self) -> None:
+        """Initialize connections state."""
+        super().__init__()
+        self._stats: list[ConnectionStat] = []
+        self._paused: bool = False
+        self._filter: str = ""
+        self._refresh_timer: Timer | None = None
+
+    def compose(self) -> ComposeResult:
+        """Build the connections layout."""
+        yield Static("", id="conn-info")
+        table: DataTable[Text] = DataTable(id="conn-table", zebra_stripes=True)
+        table.cursor_type = "row"
+        yield table
+        yield Input(
+            placeholder="Filter (user or host) — Enter to keep, Esc to clear",
+            id="conn-filter",
+        )
+
+    def on_mount(self) -> None:
+        """Set up columns and start auto-refresh."""
+        table = self.query_one("#conn-table", DataTable)
+        table.add_column("User", key="user")
+        table.add_column("Host", key="host")
+        table.add_column("Connections", key="count")
+
+        self.action_refresh()
+
+        interval = getattr(getattr(self.app, "settings", None), "refresh_interval", 3)
+        interval = max(1, int(interval))
+        self._refresh_timer = self.set_interval(interval, self._on_refresh_tick)
+
+    def refresh_data(self) -> None:
+        """Public hook to reload data (called when the tab is shown)."""
+        self.action_refresh()
+
+    # --- Data loading ---
+
+    def _on_refresh_tick(self) -> None:
+        """Timer callback — refresh unless paused and only when this tab is active.
+
+        Skips the DB query while the tab is in the background.
+        """
+        if self._paused or not _view_is_active_tab(self):
+            return
+        self.action_refresh()
+
+    def action_refresh(self) -> None:
+        """Reload connection stats (synchronous, single-threaded connection)."""
+        from mydba_tui.connection import ConnectionResult
+
+        info = self.query_one("#conn-info", Static)
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            info.update("[yellow]Not connected to a database.[/yellow]")
+            return
+
+        server_info = getattr(self.app, "server_info", None)
+        try:
+            stats = fetch_connection_stats(conn_result.connection, server_info)
+        except Exception as e:
+            info.update(f"[red]Error: {e}[/red]")
+            return
+
+        self._stats = stats
+        self._render_table()
+
+    def _render_table(self) -> None:
+        """Populate the table, preserving cursor position by (user, host)."""
+        from mydba_tui.renderers.table import styled_cell
+
+        table = self.query_one("#conn-table", DataTable)
+        selected_key = self._selected_key()
+
+        table.clear()
+        visible = self._visible_stats()
+        restore_row = 0
+        for row_idx, stat in enumerate(visible):
+            row_key = f"{stat.user}\x00{stat.host}"
+            table.add_row(
+                styled_cell(stat.user),
+                styled_cell(stat.host),
+                styled_cell(stat.count),
+                key=row_key,
+            )
+            if row_key == selected_key:
+                restore_row = row_idx
+
+        if visible:
+            try:
+                table.move_cursor(row=restore_row)
+            except Exception:
+                pass
+
+        total_conns = sum(s.count for s in self._stats)
+        shown_conns = sum(s.count for s in visible)
+        flags = []
+        if self._paused:
+            flags.append("[yellow]PAUSED[/yellow]")
+        if self._filter:
+            flags.append(f"filter: '{self._filter}'")
+        suffix = f"  ({', '.join(flags)})" if flags else ""
+        self.query_one("#conn-info", Static).update(
+            f"[bold]{len(visible)}[/bold] of {len(self._stats)} groups, "
+            f"{shown_conns} of {total_conns} connections{suffix}"
+        )
+
+    def _visible_stats(self) -> list[ConnectionStat]:
+        """Apply the text filter across user and host."""
+        if not self._filter:
+            return self._stats
+        needle = self._filter.lower()
+        return [s for s in self._stats if needle in s.user.lower() or needle in s.host.lower()]
+
+    def _selected_key(self) -> str | None:
+        """Return the row key (user\\x00host) of the selected row, if any."""
+        table = self.query_one("#conn-table", DataTable)
+        if table.row_count == 0:
+            return None
+        try:
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+        except Exception:
+            return None
+        return None if row_key.value is None else str(row_key.value)
+
+    # --- View controls ---
+
+    def action_toggle_pause(self) -> None:
+        """Toggle auto-refresh."""
+        self._paused = not self._paused
+        self._render_table()
+        self.notify("Auto-refresh paused." if self._paused else "Auto-refresh resumed.")
+
+    def action_filter(self) -> None:
+        """Reveal the filter input and focus it."""
+        flt = self.query_one("#conn-filter", Input)
+        flt.add_class("visible")
+        flt.value = self._filter
+        flt.focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Apply the filter live as the user types."""
+        if event.input.id == "conn-filter":
+            self._filter = event.value.strip()
+            self._render_table()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Dismiss the filter input on Enter, keeping the filter applied."""
+        if event.input.id == "conn-filter":
+            self._close_filter(clear=False)
+
+    def on_key(self, event: events.Key) -> None:
+        """Escape while the filter is focused clears it and returns to table."""
+        if event.key != "escape":
+            return
+        flt = self.query_one("#conn-filter", Input)
+        if flt.has_focus:
+            event.stop()
+            self._close_filter(clear=True)
+
+    def _close_filter(self, *, clear: bool) -> None:
+        """Hide the filter input and return focus to the table."""
+        flt = self.query_one("#conn-filter", Input)
+        if clear:
+            flt.value = ""
+            self._filter = ""
+            self._render_table()
+        flt.remove_class("visible")
+        self.query_one("#conn-table", DataTable).focus()
 
 
 class KeyValueView(Vertical):
@@ -876,6 +1117,8 @@ class AdministrationScreen(Screen[None]):
         with TabbedContent(id="admin-tabs"):
             with TabPane("Process List", id="tab-processlist"):
                 yield ProcessListView()
+            with TabPane("Connections", id="tab-connections"):
+                yield ConnectionsView()
             with TabPane("Variables", id="tab-variables"):
                 yield VariablesView()
             with TabPane("Status", id="tab-status"):
@@ -899,6 +1142,11 @@ class AdministrationScreen(Screen[None]):
             view.refresh_data()
         for pl in pane.walk_children(ProcessListView):
             pl.refresh_data()
+        for cv in pane.walk_children(ConnectionsView):
+            cv.refresh_data()
+        # Focus is intentionally left on the tab bar so arrow keys switch tabs;
+        # the user presses Tab to move focus into the active tab's content
+        # (matching the Object Browser).
 
     def _sync_status_bar(self) -> None:
         """Sync the status bar with the current connection state."""

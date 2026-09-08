@@ -233,16 +233,25 @@ The purpose is to help identify long-running or problematic transactions.
 
 # Connections
 
-The Connections section presents connection statistics grouped by:
+The Connections section presents connection statistics grouped by User and
+Client Host. It is the second Administration tab, right after the Process List,
+and is derived from the same live session data (the process list is aggregated
+in memory by `(user, host)`).
 
-- Username
-- Client Host
+The client host is displayed as the IP address without the client port, so all
+connections from the same source collapse into one group regardless of client
+port. For each group the number of active connections is shown, sorted with the
+heaviest sources first.
 
-The client host is displayed as the IP address without the client port.
+Like the Process List, it is a live view:
 
-For each group, the total number of active connections is displayed.
+- Auto-refresh on the interval, pausable with `p`, plus manual refresh (`r`).
+- Filtering (`/`) matches across User and Host; `Esc` clears.
 
-The purpose is to quickly understand connection distribution across applications and users.
+Only the visible tab queries the server; background tabs do not auto-refresh.
+
+The purpose is to quickly understand connection distribution across
+applications and users.
 
 ---
 

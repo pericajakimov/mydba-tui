@@ -3,6 +3,7 @@
 from mydba_tui.services.processlist import ProcessRow
 from mydba_tui.ui.screens.administration import (
     AdministrationScreen,
+    ConnectionsView,
     ProcessListView,
     StatusView,
     VariablesView,
@@ -210,3 +211,31 @@ def test_view_config_differs() -> None:
     # Status reloads each visit; variables load once.
     assert VariablesView.load_once is True
     assert StatusView.load_once is False
+
+
+def test_connections_view_bindings_present() -> None:
+    """The Connections view exposes refresh, pause, and filter keys."""
+    keys = [b.key for b in ConnectionsView.BINDINGS]
+    for key in ("r", "p", "slash"):
+        assert key in keys, f"missing binding {key}"
+
+
+def test_connections_filter_matches_user_and_host() -> None:
+    """The Connections filter matches across user and host."""
+    from mydba_tui.services.connections import ConnectionStat
+
+    view = ConnectionsView()
+    view._stats = [
+        ConnectionStat(user="app", host="10.0.0.1", count=3),
+        ConnectionStat(user="reporting", host="10.0.0.9", count=1),
+    ]
+
+    view._filter = "report"
+    assert [s.user for s in view._visible_stats()] == ["reporting"]
+
+    # Match on host.
+    view._filter = "0.0.1"
+    assert [s.user for s in view._visible_stats()] == ["app"]
+
+    view._filter = ""
+    assert len(view._visible_stats()) == 2

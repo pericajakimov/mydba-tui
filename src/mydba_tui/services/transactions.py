@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from mydba_tui.logging import log_sql
 from mydba_tui.services.processlist import _strip_port
+from mydba_tui.services.sql_loader import load_sql
 
 if TYPE_CHECKING:
     from mysql.connector.abstracts import MySQLConnectionAbstract
@@ -32,22 +33,9 @@ TRANSACTION_COLUMNS = [
     "Query",
 ]
 
-# innodb_trx joined to processlist for the session's user/host/db. Age is
-# computed server-side as seconds since the transaction started.
-_SQL_TRANSACTIONS = (
-    "SELECT t.trx_id AS trx_id, "
-    "t.trx_mysql_thread_id AS conn_id, "
-    "p.USER AS user, p.HOST AS host, p.DB AS db, "
-    "t.trx_state AS state, "
-    "t.trx_started AS started, "
-    "TIMESTAMPDIFF(SECOND, t.trx_started, NOW()) AS age_seconds, "
-    "t.trx_rows_locked AS rows_locked, "
-    "t.trx_query AS query "
-    "FROM information_schema.innodb_trx t "
-    "LEFT JOIN information_schema.processlist p "
-    "ON p.ID = t.trx_mysql_thread_id "
-    "ORDER BY age_seconds DESC"
-)
+# Substantial queries live in sql/admin/.
+_SQL_FILE_TRANSACTIONS = "admin/transactions.sql"
+_SQL_FILE_STATEMENT_HISTORY = "admin/statement_history.sql"
 
 
 def _str(val: Any) -> str:
@@ -112,16 +100,17 @@ def fetch_transactions(
     Returns:
         List of TransactionRow sorted by age descending (longest-running first).
     """
+    sql = load_sql(_SQL_FILE_TRANSACTIONS)
     start = time.perf_counter()
     cursor = connection.cursor(buffered=True)
     try:
-        cursor.execute(_SQL_TRANSACTIONS)
+        cursor.execute(sql)
         description = cursor.description or []
         col_names = [desc[0] for desc in description]
         raw_rows = cursor.fetchall()
     finally:
         duration = time.perf_counter() - start
-        log_sql(_SQL_TRANSACTIONS, duration, "administration.transactions")
+        log_sql(sql, duration, "administration.transactions")
         cursor.close()
 
     idx = {name.lower(): i for i, name in enumerate(col_names)}
@@ -196,16 +185,19 @@ def fetch_statement_history(
     if conn_id <= 0:
         return []
 
+    # conn_id is an int, so direct substitution into the {conn_id} placeholder
+    # is safe (no injection surface).
+    query_sql = load_sql(_SQL_FILE_STATEMENT_HISTORY).replace("{conn_id}", str(int(conn_id)))
     start = time.perf_counter()
     cursor = connection.cursor(buffered=True)
     try:
-        cursor.execute(_SQL_STATEMENT_HISTORY, (conn_id,))
+        cursor.execute(query_sql)
         raw_rows = cursor.fetchall()
     except Exception:
         raw_rows = []
     finally:
         duration = time.perf_counter() - start
-        log_sql(_SQL_STATEMENT_HISTORY, duration, "administration.statement_history")
+        log_sql(query_sql, duration, "administration.statement_history")
         cursor.close()
 
     entries: list[StatementHistoryEntry] = []

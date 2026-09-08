@@ -39,24 +39,26 @@ def test_mariadb_uses_information_schema() -> None:
 def test_old_mysql_falls_back_to_show() -> None:
     """MySQL 5.7 should fall back to SHOW FULL PROCESSLIST."""
     sql = select_processlist_query(_info("oracle", "5.7.44"))
-    assert sql == "SHOW FULL PROCESSLIST"
+    assert "SHOW FULL PROCESSLIST" in sql
+    assert "performance_schema" not in sql
 
 
 def test_unknown_vendor_falls_back_to_show() -> None:
     """An unknown vendor should fall back to SHOW FULL PROCESSLIST."""
     sql = select_processlist_query(_info("", ""))
-    assert sql == "SHOW FULL PROCESSLIST"
+    assert "SHOW FULL PROCESSLIST" in sql
 
 
 def test_none_server_info_falls_back_to_show() -> None:
     """No server info should fall back to SHOW FULL PROCESSLIST."""
-    assert select_processlist_query(None) == "SHOW FULL PROCESSLIST"
+    assert "SHOW FULL PROCESSLIST" in select_processlist_query(None)
 
 
 def test_unparseable_version_falls_back_to_show() -> None:
     """A version string that cannot be parsed should not select perf_schema."""
     sql = select_processlist_query(_info("oracle", "unknown"))
-    assert sql == "SHOW FULL PROCESSLIST"
+    assert "SHOW FULL PROCESSLIST" in sql
+    assert "performance_schema" not in sql
 
 
 def test_process_row_as_cells_matches_columns() -> None:

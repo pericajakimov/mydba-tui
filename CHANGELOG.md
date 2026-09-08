@@ -89,6 +89,22 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 - Interactive export (`Ctrl+E`) of the last result set.
 - Direct export (`Ctrl+Shift+E`) that streams query results straight to a file.
 
+#### SQL organization and transparency
+
+- Moved substantial application SQL out of Python into `.sql` files under
+  `mydba_tui/sql/` (admin, browser/dependency, workspace autocomplete), loaded
+  via `load_sql`; trivial statements (SHOW/KILL/SELECT DATABASE, detection
+  probes, sample data) remain inline.
+- Application-generated statements are tagged with a `/* mydba */` marker so
+  they are recognizable in the server process list; user-entered SQL runs
+  untouched. File header comments are stripped before statements are sent.
+- Connections report `program_name = mydba`, so the tool is identified in the
+  process list Program column.
+- Autocomplete schema/database values are now escaped before interpolation
+  (removing an f-string injection risk).
+- The `sql/` directory now lives inside the package and ships with the wheel
+  (packaged via `package-data`).
+
 #### Configuration
 
 - Documented `settings.yaml` with human-readable durations.

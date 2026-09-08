@@ -63,11 +63,10 @@ Typical top-level directories include:
 
 ```
 docs/
-src/
+src/            (package code; SQL lives under src/mydba_tui/sql/)
 tests/
-sql/
-themes/
 scripts/
+examples/
 ```
 
 Each directory should have a clearly defined purpose.

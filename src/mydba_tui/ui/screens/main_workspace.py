@@ -1414,7 +1414,9 @@ class MainWorkspaceScreen(Screen[None]):
         import time
 
         from mydba_tui.logging import log_sql
+        from mydba_tui.services.sql_loader import tag_sql
 
+        sql = tag_sql(sql)
         start = time.perf_counter()
         try:
             cursor = conn_result.connection.cursor(buffered=True)

@@ -158,6 +158,10 @@ def _build_connect_kwargs(
         kwargs["connection_timeout"] = profile.connect_timeout
     kwargs["autocommit"] = True
 
+    # Identify ourselves to the server so mydba shows up in the process list's
+    # Program column (via performance_schema.session_connect_attrs).
+    kwargs["conn_attrs"] = {"program_name": "mydba"}
+
     if profile.username:
         kwargs["username"] = profile.username
 

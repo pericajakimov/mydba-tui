@@ -77,6 +77,10 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 
+[tool.setuptools.package-data]
+mydba_tui = ["sql/**/*.sql"]
+
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

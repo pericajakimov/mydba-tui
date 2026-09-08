@@ -58,7 +58,12 @@ across backends:
 
 On the `performance_schema` path the client program name is sourced from
 `performance_schema.session_connect_attrs` (`program_name`), the same way MySQL
-Workbench does it. On the other paths the Program column is empty.
+Workbench does it. On the other paths the Program column is empty. mydba's own
+connections report `program_name = mydba`, so the tool identifies itself here.
+
+All statements mydba runs internally are tagged with a `/* mydba */` marker in
+their text, making them easy to spot in the Info column; queries you run from
+the SQL Workspace are sent exactly as written, without any tag.
 
 ## Columns
 

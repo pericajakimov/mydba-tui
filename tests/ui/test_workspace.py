@@ -84,3 +84,14 @@ def test_workspace_split_statements_mixed_terminators() -> None:
     assert result[0] == ("SELECT 1", False)
     assert result[1] == ("SELECT * FROM orders", True)
     assert result[2] == ("SELECT 3", False)
+
+
+def test_sql_quote_escapes_single_quotes() -> None:
+    """_sql_quote escapes quotes/backslashes so a schema name can't break out."""
+    from mydba_tui.ui.screens.workspace import _sql_quote
+
+    assert _sql_quote("normal") == "normal"
+    assert _sql_quote("o'brien") == "o''brien"
+    assert _sql_quote("a\\b") == "a\\\\b"
+    # A crafted injection attempt stays inside the quoted literal.
+    assert _sql_quote("x' OR '1'='1") == "x'' OR ''1''=''1"

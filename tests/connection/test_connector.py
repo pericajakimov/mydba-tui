@@ -211,3 +211,12 @@ def test_username_not_overridden_when_empty() -> None:
     kwargs = _build_connect_kwargs(profile, "")
 
     assert "username" not in kwargs
+
+
+def test_sets_program_name_conn_attr() -> None:
+    """The connection reports program_name=mydba for the process list."""
+    profile = Profile(name="test", host="db")
+
+    kwargs = _build_connect_kwargs(profile, "")
+
+    assert kwargs["conn_attrs"] == {"program_name": "mydba"}

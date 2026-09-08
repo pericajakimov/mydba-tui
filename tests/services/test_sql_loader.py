@@ -185,3 +185,89 @@ def test_load_returns_stripped_content() -> None:
     sql = load_sql("browser/schema_names.sql")
     assert not sql.startswith("\n")
     assert not sql.endswith("\n")
+
+
+# --- Extracted admin / dependency / workspace queries ---
+
+_EXTRACTED_SQL_FILES = [
+    "admin/processlist_performance_schema.sql",
+    "admin/processlist_information_schema.sql",
+    "admin/transactions.sql",
+    "admin/statement_history.sql",
+    "browser/dep_views.sql",
+    "browser/dep_procedures.sql",
+    "browser/dep_functions.sql",
+    "browser/dep_triggers.sql",
+    "browser/dep_events.sql",
+    "browser/dep_tables.sql",
+    "browser/dep_foreign_keys.sql",
+    "workspace/schema_names.sql",
+    "workspace/objects_in_current_db.sql",
+    "workspace/routines_in_current_db.sql",
+    "workspace/objects_in_schema.sql",
+]
+
+
+@pytest.mark.parametrize("relative_path", _EXTRACTED_SQL_FILES)
+def test_extracted_sql_files_load(relative_path: str) -> None:
+    """Every extracted .sql file exists and returns non-empty SQL."""
+    sql = load_sql(relative_path)
+    assert sql.strip(), f"{relative_path} is empty"
+    assert "SELECT" in sql.upper()
+
+
+def test_statement_history_has_conn_id_placeholder() -> None:
+    """The statement history query exposes the {conn_id} placeholder."""
+    sql = load_sql("admin/statement_history.sql")
+    assert "{conn_id}" in sql
+    assert "events_statements_history" in sql
+
+
+def test_workspace_queries_have_schema_placeholder() -> None:
+    """The schema-scoped autocomplete queries expose the {schema} placeholder."""
+    for path in (
+        "workspace/objects_in_current_db.sql",
+        "workspace/routines_in_current_db.sql",
+        "workspace/objects_in_schema.sql",
+    ):
+        assert "{schema}" in load_sql(path), f"{path} missing placeholder"
+
+
+def test_missing_sql_file_raises() -> None:
+    """Loading a non-existent SQL file raises FileNotFoundError."""
+    with pytest.raises(FileNotFoundError):
+        load_sql("admin/does_not_exist.sql")
+
+
+# --- Tagging and header stripping ---
+
+from mydba_tui.services.sql_loader import tag_sql  # noqa: E402
+
+
+def test_tag_sql_prefixes_marker() -> None:
+    """tag_sql prepends the mydba marker."""
+    assert tag_sql("SELECT 1") == "/* mydba */ SELECT 1"
+
+
+def test_loaded_sql_is_tagged() -> None:
+    """load_sql output carries the mydba marker for process-list visibility."""
+    sql = load_sql("browser/schema_names.sql")
+    assert sql.startswith("/* mydba */")
+
+
+def test_loaded_sql_strips_header_comments() -> None:
+    """The file's leading -- comment header is not sent to the server."""
+    sql = load_sql("admin/transactions.sql")
+    # The human header (e.g. "-- Active InnoDB transactions...") is removed.
+    assert "-- Active InnoDB" not in sql
+    assert "Called from" not in sql
+    # The actual statement survives.
+    assert "innodb_trx" in sql
+
+
+def test_loaded_sql_starts_with_statement_after_tag() -> None:
+    """After the tag, the text begins with SQL, not a comment line."""
+    sql = load_sql("browser/dep_views.sql")
+    body = sql[len("/* mydba */ ") :]
+    assert not body.lstrip().startswith("--")
+    assert body.upper().startswith("SELECT")

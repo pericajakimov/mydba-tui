@@ -13,7 +13,7 @@ from mysql.connector.abstracts import MySQLConnectionAbstract
 from mysql.connector.pooling import PooledMySQLConnection
 
 from mydba_tui.logging import log_sql
-from mydba_tui.services.sql_loader import load_sql
+from mydba_tui.services.sql_loader import load_sql, tag_sql
 
 
 @dataclass(slots=True)
@@ -744,7 +744,7 @@ def get_sample_data(
         pk_str = ", ".join(f"`{c}` {order}" for c in pk_cols)
         order_clause = f" ORDER BY {pk_str}"
 
-    sample_sql = f"SELECT * FROM `{schema}`.`{table}`{order_clause} LIMIT {limit}"
+    sample_sql = tag_sql(f"SELECT * FROM `{schema}`.`{table}`{order_clause} LIMIT {limit}")
     start = time.perf_counter()
     cursor = connection.cursor(buffered=True)
     cursor.execute(sample_sql)

@@ -167,11 +167,9 @@ The project is designed to support offline installation on secured production sy
 
 ```
 docs/
-src/
-sql/
+src/            (package code + SQL under src/mydba_tui/sql/)
 tests/
 scripts/
-themes/
 examples/
 packaging/
 assets/

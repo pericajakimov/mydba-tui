@@ -11,12 +11,13 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from mydba_tui.logging import log_sql
+from mydba_tui.services.sql_loader import tag_sql
 
 if TYPE_CHECKING:
     from mysql.connector.abstracts import MySQLConnectionAbstract
     from mysql.connector.pooling import PooledMySQLConnection
 
-_SQL_GLOBAL_STATUS = "SHOW GLOBAL STATUS"
+_SQL_GLOBAL_STATUS = tag_sql("SHOW GLOBAL STATUS")
 
 
 def _str(val: Any) -> str:

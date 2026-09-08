@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from mydba_tui.logging import log_sql
+from mydba_tui.services.sql_loader import load_sql, tag_sql
 
 if TYPE_CHECKING:
     from mysql.connector.abstracts import MySQLConnectionAbstract
@@ -36,30 +37,11 @@ PROCESS_COLUMNS = [
     "Info",
 ]
 
-# performance_schema.processlist (MySQL 8.0+, Percona, PXC, Aurora v3).
-# The client program name lives in session_connect_attrs (attr 'program_name'),
-# joined by the session's PROCESSLIST_ID — this is how Workbench sources it.
-_SQL_PERFORMANCE_SCHEMA = (
-    "SELECT p.ID AS Id, p.USER AS User, p.HOST AS Host, p.DB AS db, "
-    "p.COMMAND AS Command, p.TIME AS Time, p.STATE AS State, p.INFO AS Info, "
-    "a.ATTR_VALUE AS Program "
-    "FROM performance_schema.processlist p "
-    "LEFT JOIN performance_schema.session_connect_attrs a "
-    "ON a.PROCESSLIST_ID = p.ID AND a.ATTR_NAME = 'program_name' "
-    "ORDER BY p.TIME DESC"
-)
-
-# information_schema.PROCESSLIST (MariaDB, older MySQL). No program name source.
-_SQL_INFORMATION_SCHEMA = (
-    "SELECT ID AS Id, USER AS User, HOST AS Host, DB AS db, "
-    "COMMAND AS Command, TIME AS Time, STATE AS State, INFO AS Info, "
-    "NULL AS Program "
-    "FROM information_schema.PROCESSLIST "
-    "ORDER BY TIME DESC"
-)
-
-# Universal fallback — always available. No Program column (unavailable here).
-_SQL_SHOW = "SHOW FULL PROCESSLIST"
+# Query sources by backend. The two substantial queries live in sql/admin/;
+# the universal fallback is a trivial statement kept inline.
+_SQL_FILE_PERFORMANCE_SCHEMA = "admin/processlist_performance_schema.sql"
+_SQL_FILE_INFORMATION_SCHEMA = "admin/processlist_information_schema.sql"
+_SQL_SHOW = tag_sql("SHOW FULL PROCESSLIST")
 
 
 @dataclass(slots=True)
@@ -132,12 +114,12 @@ def select_processlist_query(server_info: ServerInfo | None) -> str:
 
     vendor = server_info.vendor
     if vendor == "mariadb":
-        return _SQL_INFORMATION_SCHEMA
+        return load_sql(_SQL_FILE_INFORMATION_SCHEMA)
 
     if vendor in ("oracle", "percona", "pxc", "aurora"):
         major, minor = _version_major_minor(server_info.version)
         if (major, minor) >= (8, 0):
-            return _SQL_PERFORMANCE_SCHEMA
+            return load_sql(_SQL_FILE_PERFORMANCE_SCHEMA)
         # Older MySQL family without a usable performance_schema.processlist.
         return _SQL_SHOW
 
@@ -261,7 +243,7 @@ def kill_session(
         Exception: Propagates database errors (e.g. unknown thread id) to the
             caller so they can be surfaced to the user.
     """
-    sql = f"KILL {'QUERY ' if query_only else ''}{int(process_id)}"
+    sql = tag_sql(f"KILL {'QUERY ' if query_only else ''}{int(process_id)}")
     start = time.perf_counter()
     cursor = connection.cursor()
     try:

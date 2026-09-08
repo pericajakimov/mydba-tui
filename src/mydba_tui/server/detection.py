@@ -13,6 +13,7 @@ from mysql.connector.abstracts import MySQLConnectionAbstract
 from mysql.connector.pooling import PooledMySQLConnection
 
 from mydba_tui.logging import log_sql
+from mydba_tui.services.sql_loader import tag_sql
 
 
 @dataclass(slots=True)
@@ -92,6 +93,7 @@ def _query_one(
     Returns:
         First row as a tuple of strings, or None if no results.
     """
+    sql = tag_sql(sql)
     start = time.perf_counter()
     cursor = connection.cursor()
     try:

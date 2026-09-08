@@ -26,6 +26,7 @@ from mydba_tui.renderers.table import S_BORDER as _S_BORDER
 from mydba_tui.renderers.table import S_HEADER as _S_HEADER
 from mydba_tui.renderers.table import format_cell as _format_cell
 from mydba_tui.renderers.table import styled_cell as _styled_cell
+from mydba_tui.services.sql_loader import load_sql, tag_sql
 from mydba_tui.ui.widgets import StatusBar
 from mydba_tui.ui.widgets.sql_editor import SQLEditor
 
@@ -1120,11 +1121,11 @@ class WorkspaceScreen(Screen[None]):
             cursor = conn_result.connection.cursor(buffered=True)
 
             # Get all schema names
-            cursor.execute("SELECT schema_name FROM information_schema.schemata")
+            cursor.execute(load_sql("workspace/schema_names.sql"))
             schemas = [str(r[0]) for r in cursor.fetchall()]  # type: ignore[index]
 
             # Get current database
-            cursor.execute("SELECT DATABASE()")
+            cursor.execute(tag_sql("SELECT DATABASE()"))
             row = cursor.fetchone()
             current_db = str(row[0]) if row and row[0] else ""  # type: ignore[index]
 
@@ -1132,11 +1133,10 @@ class WorkspaceScreen(Screen[None]):
             tables: list[str] = []
             views: list[str] = []
             if current_db:
-                cursor.execute(
-                    "SELECT table_name, table_type "
-                    "FROM information_schema.tables "
-                    f"WHERE table_schema = '{current_db}'"
+                sql = load_sql("workspace/objects_in_current_db.sql").replace(
+                    "{schema}", _sql_quote(current_db)
                 )
+                cursor.execute(sql)
                 for r in cursor.fetchall():
                     name = str(r[0])  # type: ignore[index]
                     if r[1] == "BASE TABLE":  # type: ignore[index]
@@ -1148,11 +1148,10 @@ class WorkspaceScreen(Screen[None]):
             procs: list[str] = []
             funcs: list[str] = []
             if current_db:
-                cursor.execute(
-                    "SELECT routine_name, routine_type "
-                    "FROM information_schema.routines "
-                    f"WHERE routine_schema = '{current_db}'"
+                sql = load_sql("workspace/routines_in_current_db.sql").replace(
+                    "{schema}", _sql_quote(current_db)
                 )
+                cursor.execute(sql)
                 for r in cursor.fetchall():
                     name = str(r[0])  # type: ignore[index]
                     if r[1] == "PROCEDURE":  # type: ignore[index]
@@ -1193,13 +1192,10 @@ class WorkspaceScreen(Screen[None]):
                 return []
 
             cursor = conn_result.connection.cursor(buffered=True)
-            cursor.execute(
-                "SELECT table_name FROM information_schema.tables "
-                f"WHERE table_schema = '{schema}' "
-                "UNION "
-                "SELECT routine_name FROM information_schema.routines "
-                f"WHERE routine_schema = '{schema}'"
+            sql = load_sql("workspace/objects_in_schema.sql").replace(
+                "{schema}", _sql_quote(schema)
             )
+            cursor.execute(sql)
             objects = [str(r[0]) for r in cursor.fetchall()]  # type: ignore[index]
             cursor.close()
 
@@ -1259,6 +1255,15 @@ class WorkspaceScreen(Screen[None]):
 # --- Autocomplete helpers ---
 
 _DOT_PATTERN = re.compile(r"`?(\w+)`?\.\s*`?(\w*)$")
+
+
+def _sql_quote(value: str) -> str:
+    """Escape a value for safe use inside a single-quoted SQL string literal.
+
+    Used when substituting a schema/database name into an autocomplete query's
+    ``'{schema}'`` placeholder, so a name containing a quote cannot break out.
+    """
+    return value.replace("\\", "\\\\").replace("'", "''")
 
 
 def _get_word_at_cursor(text_before_cursor: str) -> str:

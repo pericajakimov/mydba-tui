@@ -21,6 +21,7 @@ from mysql.connector.pooling import PooledMySQLConnection
 from sqlglot import exp
 
 from mydba_tui.logging import log_sql
+from mydba_tui.services.sql_loader import load_sql
 
 
 class ObjectType(Enum):
@@ -153,33 +154,38 @@ def _enumerate_objects(
     """
     objects: list[tuple[ObjectRef, str]] = []
 
-    # Views
-    sql = "SELECT table_schema, table_name, view_definition FROM information_schema.views"
-    objects.extend(_fetch_objects(connection, sql, ObjectType.VIEW, "enum.views"))
-
-    # Procedures
-    sql = (
-        "SELECT routine_schema, routine_name, routine_definition "
-        "FROM information_schema.routines "
-        "WHERE routine_type = 'PROCEDURE'"
+    objects.extend(
+        _fetch_objects(connection, load_sql("browser/dep_views.sql"), ObjectType.VIEW, "enum.views")
     )
-    objects.extend(_fetch_objects(connection, sql, ObjectType.PROCEDURE, "enum.procedures"))
-
-    # Functions
-    sql = (
-        "SELECT routine_schema, routine_name, routine_definition "
-        "FROM information_schema.routines "
-        "WHERE routine_type = 'FUNCTION'"
+    objects.extend(
+        _fetch_objects(
+            connection,
+            load_sql("browser/dep_procedures.sql"),
+            ObjectType.PROCEDURE,
+            "enum.procedures",
+        )
     )
-    objects.extend(_fetch_objects(connection, sql, ObjectType.FUNCTION, "enum.functions"))
-
-    # Triggers
-    sql = "SELECT trigger_schema, trigger_name, action_statement FROM information_schema.triggers"
-    objects.extend(_fetch_objects(connection, sql, ObjectType.TRIGGER, "enum.triggers"))
-
-    # Events
-    sql = "SELECT event_schema, event_name, event_definition FROM information_schema.events"
-    objects.extend(_fetch_objects(connection, sql, ObjectType.EVENT, "enum.events"))
+    objects.extend(
+        _fetch_objects(
+            connection,
+            load_sql("browser/dep_functions.sql"),
+            ObjectType.FUNCTION,
+            "enum.functions",
+        )
+    )
+    objects.extend(
+        _fetch_objects(
+            connection,
+            load_sql("browser/dep_triggers.sql"),
+            ObjectType.TRIGGER,
+            "enum.triggers",
+        )
+    )
+    objects.extend(
+        _fetch_objects(
+            connection, load_sql("browser/dep_events.sql"), ObjectType.EVENT, "enum.events"
+        )
+    )
 
     return objects
 
@@ -220,11 +226,7 @@ def _enumerate_tables(
 
     Tables are targets only — other objects reference them.
     """
-    sql = (
-        "SELECT table_schema, table_name "
-        "FROM information_schema.tables "
-        "WHERE table_type = 'BASE TABLE'"
-    )
+    sql = load_sql("browser/dep_tables.sql")
     start = time.perf_counter()
     try:
         cursor = connection.cursor(buffered=True)
@@ -254,11 +256,7 @@ def _enumerate_foreign_keys(
 
     Returns: (source_schema, source_table, target_schema, target_table, constraint_name).
     """
-    sql = (
-        "SELECT constraint_schema, table_name, "
-        "constraint_schema, referenced_table_name, constraint_name "
-        "FROM information_schema.referential_constraints"
-    )
+    sql = load_sql("browser/dep_foreign_keys.sql")
     start = time.perf_counter()
     try:
         cursor = connection.cursor(buffered=True)

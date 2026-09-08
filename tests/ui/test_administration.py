@@ -4,6 +4,7 @@ from mydba_tui.services.processlist import ProcessRow
 from mydba_tui.ui.screens.administration import (
     AdministrationScreen,
     ConnectionsView,
+    LocksView,
     ProcessListView,
     StatusView,
     TransactionsView,
@@ -307,3 +308,58 @@ def test_transaction_snippet_includes_metadata_and_query() -> None:
     assert "-- Connection Id: 222" in snippet
     assert "-- Age: 95 (1m 35s)" in snippet
     assert snippet.rstrip().endswith("DELETE FROM t")
+
+
+def _lock(**overrides: object):
+    from mydba_tui.services.locks import LockWait
+
+    base: dict[str, object] = {
+        "wait_age_secs": 12,
+        "locked_schema": "shop",
+        "locked_table": "orders",
+        "locked_type": "RECORD",
+        "waiting_pid": 101,
+        "waiting_user": "app",
+        "waiting_host": "10.0.0.1",
+        "waiting_lock_mode": "X",
+        "waiting_query": "UPDATE orders SET status = 1 WHERE id = 5",
+        "blocking_pid": 202,
+        "blocking_user": "reporting",
+        "blocking_host": "10.0.0.2",
+        "blocking_lock_mode": "X",
+        "blocking_query": "SELECT * FROM orders FOR UPDATE",
+    }
+    base.update(overrides)
+    return LockWait(**base)  # type: ignore[arg-type]
+
+
+def test_locks_view_bindings_present() -> None:
+    """The Locks view exposes refresh, pause, filter, and kill-blocker."""
+    keys = _all_binding_keys(LocksView)
+    for key in ("r", "p", "slash", "k"):
+        assert key in keys, f"missing binding {key}"
+
+
+def test_locks_filter_matches_users_table_query() -> None:
+    """The Locks filter matches waiting/blocking users, table, and queries."""
+    view = LocksView()
+    view._items = [
+        _lock(waiting_pid=1, blocking_user="reporting"),
+        _lock(waiting_pid=2, blocking_user="etl", locked_table="invoices"),
+    ]
+
+    view._filter = "reporting"
+    assert [lw.waiting_pid for lw in view._visible_items()] == [1]  # type: ignore[attr-defined]
+
+    view._filter = "invoices"
+    assert [lw.waiting_pid for lw in view._visible_items()] == [2]  # type: ignore[attr-defined]
+
+    view._filter = ""
+    assert len(view._visible_items()) == 2
+
+
+def test_locks_row_key_pairs_waiting_and_blocking() -> None:
+    """A lock wait's row key is the (waiting, blocking) pid pair."""
+    view = LocksView()
+    key = view._row_key(_lock(waiting_pid=101, blocking_pid=202))
+    assert key == "101\x00202"

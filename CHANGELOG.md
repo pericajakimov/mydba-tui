@@ -25,6 +25,10 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
   running first, with auto-refresh, pause, filter, kill-connection, open-query-
   in-workspace, and a detail view including the connection's statement history
   from performance_schema.
+- Locks tab (after Transactions): InnoDB row-lock waits from the sys schema
+  showing blocked and blocking sessions, with auto-refresh, pause, filter, and
+  kill-blocking-connection. The detail view shows both queries and the blocking
+  session's recent statement history (useful when the blocker is idle).
 - Shared LiveTableView base underlying the Process List, Connections, and
   Transactions views (auto-refresh, pause, filter, cursor preservation).
 - Administration tabs only query the server while visible; background tabs no

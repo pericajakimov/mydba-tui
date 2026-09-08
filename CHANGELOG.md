@@ -12,8 +12,13 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 
 #### Administration
 
-- Process List: a live view of active MySQL sessions, reached from the Object
-  Browser (`A`). The query source is chosen per server
+- Tabbed Administration screen (reached from the Object Browser with `A`),
+  navigated like the Object Browser tabs.
+- Variables tab: all global variables as a sorted Variable/Value table with
+  immediate name+value filtering, manual refresh, and a full-value view on
+  Enter.
+- Process List: a live view of active MySQL sessions, now the first
+  Administration tab. The query source is chosen per server
   (`performance_schema.processlist` for MySQL 8.0+, `information_schema` for
   MariaDB, `SHOW FULL PROCESSLIST` otherwise).
 - Columns: Id, User, Host (IP only), db, Command, Time, State, Program, Info.

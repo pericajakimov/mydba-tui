@@ -167,13 +167,22 @@ The presentation should provide immediate operational awareness rather than expo
 
 # Variables
 
-The Variables section provides access to MySQL global variables.
+The Variables section provides access to MySQL global variables. It is a tab in
+the Administration screen, reached from the Object Browser with `A`.
 
-The preferred initial view displays only variables whose values differ from the server defaults.
+It lists all global variables (from `SHOW GLOBAL VARIABLES`) as a Variable/Value
+table, sorted by name.
 
-If supported by the implementation, the user may switch to viewing all variables.
+- Filtering (`/`) is immediate and matches across both the variable name and
+  its value. `Esc` clears the filter.
+- Refresh (`r`) reloads on demand; variables rarely change, so there is no
+  auto-refresh.
+- Long values are truncated in the table; `Enter` opens the full value.
 
-Dynamic filtering by variable name and value should be available.
+> A "non-default only" view (showing just variables that differ from server
+> defaults) was considered but deferred: MySQL exposes no reliable catalog of
+> per-version, per-vendor defaults, so such a view cannot be computed
+> accurately. Strong filtering covers the common need to locate a variable.
 
 ---
 

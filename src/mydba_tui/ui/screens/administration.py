@@ -17,7 +17,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen, Screen
 from textual.timer import Timer
-from textual.widgets import DataTable, Footer, Header, Input, Static
+from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
 
 from mydba_tui.services.processlist import (
     PROCESS_COLUMNS,
@@ -25,6 +25,7 @@ from mydba_tui.services.processlist import (
     fetch_processes,
     kill_session,
 )
+from mydba_tui.services.variables import fetch_variables
 from mydba_tui.ui.screens.workspace import WorkspaceScreen
 from mydba_tui.ui.widgets import ConfirmDialog, StatusBar
 
@@ -87,50 +88,47 @@ def _build_workspace_snippet(proc: ProcessRow) -> str:
     return "\n".join(lines)
 
 
-class AdministrationScreen(Screen[None]):
-    """Administration — Process List of active MySQL sessions."""
+class ProcessListView(Vertical):
+    """Process List section — a live, filterable view of active sessions."""
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh", key_display="R", priority=True),
         Binding("p", "toggle_pause", "Pause/Resume", key_display="P"),
         Binding("s", "toggle_sleeping", "Hide Sleeping", key_display="S"),
         Binding("slash", "filter", "Filter", key_display="/"),
-        Binding("k", "kill_query", "Kill Query", key_display="K"),
-        Binding("shift+k", "kill_connection", "Kill Conn", key_display="⇧K"),
-        Binding("enter", "show_detail", "Details", key_display="↵"),
+        Binding("k", "kill_query", "Kill Query", key_display="k"),
+        Binding("K", "kill_connection", "Kill Conn", key_display="K"),
         Binding("w", "open_in_workspace", "To Workspace", key_display="W"),
-        Binding("escape", "go_back", "Back", key_display="Esc"),
-        Binding("f10", "quit", "Exit", key_display="F10"),
     ]
 
-    CSS = """
-    #admin-layout {
+    DEFAULT_CSS = """
+    ProcessListView {
         height: 1fr;
     }
 
-    #admin-info {
+    ProcessListView #admin-info {
         height: 1;
         color: $text-muted;
         padding: 0 1;
     }
 
-    #process-table {
+    ProcessListView #process-table {
         height: 1fr;
     }
 
-    #admin-filter {
+    ProcessListView #admin-filter {
         display: none;
         dock: bottom;
         border: tall $accent;
     }
 
-    #admin-filter.visible {
+    ProcessListView #admin-filter.visible {
         display: block;
     }
     """
 
     def __init__(self) -> None:
-        """Initialize administration state."""
+        """Initialize process list state."""
         super().__init__()
         self._processes: list[ProcessRow] = []
         self._paused: bool = False
@@ -140,22 +138,17 @@ class AdministrationScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         """Build the process list layout."""
-        yield Header()
-        yield StatusBar(id="status-bar")
-        with Vertical(id="admin-layout"):
-            yield Static("", id="admin-info")
-            table: DataTable[Text] = DataTable(id="process-table", zebra_stripes=True)
-            table.cursor_type = "row"
-            yield table
-            yield Input(
-                placeholder="Filter (user, host, db, state, query) — Enter to keep, Esc to clear",
-                id="admin-filter",
-            )
-        yield Footer()
+        yield Static("", id="admin-info")
+        table: DataTable[Text] = DataTable(id="process-table", zebra_stripes=True)
+        table.cursor_type = "row"
+        yield table
+        yield Input(
+            placeholder="Filter (user, host, db, state, query) — Enter to keep, Esc to clear",
+            id="admin-filter",
+        )
 
     def on_mount(self) -> None:
-        """Set up the table columns, sync status, and start auto-refresh."""
-        self._sync_status_bar()
+        """Set up the table columns and start auto-refresh."""
         table = self.query_one("#process-table", DataTable)
         for col in PROCESS_COLUMNS:
             table.add_column(col, key=col)
@@ -167,16 +160,9 @@ class AdministrationScreen(Screen[None]):
         interval = max(1, int(interval))
         self._refresh_timer = self.set_interval(interval, self._on_refresh_tick)
 
-    def on_screen_resume(self) -> None:
-        """Refresh when returning to the screen."""
-        self._sync_status_bar()
+    def refresh_data(self) -> None:
+        """Public hook to reload data (called when the tab is shown)."""
         self.action_refresh()
-
-    def _sync_status_bar(self) -> None:
-        """Sync the status bar with the current connection state."""
-        status = getattr(self.app, "connection_status", "")
-        if status:
-            self.query_one("#status-bar", StatusBar).status_text = status
 
     # --- Data loading ---
 
@@ -493,15 +479,185 @@ class AdministrationScreen(Screen[None]):
         workspace.load_query(text)
         self.app.push_screen("workspace")
 
-    # --- Navigation ---
 
-    def action_go_back(self) -> None:
-        """Return to the object browser."""
-        self.app.pop_screen()
+class VariablesView(Vertical):
+    """Variables section — all global variables with client-side filtering."""
 
-    def action_quit(self) -> None:
-        """Exit the application."""
-        self.app.exit()
+    BINDINGS = [
+        Binding("r", "refresh", "Refresh", key_display="R", priority=True),
+        Binding("slash", "filter", "Filter", key_display="/"),
+    ]
+
+    DEFAULT_CSS = """
+    VariablesView {
+        height: 1fr;
+    }
+
+    VariablesView #vars-info {
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
+    VariablesView #vars-table {
+        height: 1fr;
+    }
+
+    VariablesView #vars-filter {
+        display: none;
+        dock: bottom;
+        border: tall $accent;
+    }
+
+    VariablesView #vars-filter.visible {
+        display: block;
+    }
+    """
+
+    # Value truncation in the table; full value shown in the detail modal.
+    _VALUE_TRUNCATE = 100
+
+    def __init__(self) -> None:
+        """Initialize variables state."""
+        super().__init__()
+        self._variables: list[tuple[str, str]] = []
+        self._filter: str = ""
+
+    def compose(self) -> ComposeResult:
+        """Build the variables layout."""
+        yield Static("", id="vars-info")
+        table: DataTable[Text] = DataTable(id="vars-table", zebra_stripes=True)
+        table.cursor_type = "row"
+        yield table
+        yield Input(
+            placeholder="Filter (name or value) — Enter to keep, Esc to clear",
+            id="vars-filter",
+        )
+
+    def on_mount(self) -> None:
+        """Set up the table columns and load once."""
+        table = self.query_one("#vars-table", DataTable)
+        table.add_column("Variable", key="name")
+        table.add_column("Value", key="value")
+        self.action_refresh()
+
+    def refresh_data(self) -> None:
+        """Public hook to (re)load data when the tab is shown."""
+        # Load only if not loaded yet; variables rarely change.
+        if not self._variables:
+            self.action_refresh()
+
+    # --- Data loading ---
+
+    def action_refresh(self) -> None:
+        """Reload global variables (synchronous, single-threaded connection)."""
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            self.query_one("#vars-info", Static).update(
+                "[yellow]Not connected to a database.[/yellow]"
+            )
+            return
+
+        try:
+            variables = fetch_variables(conn_result.connection)
+        except Exception as e:
+            self.query_one("#vars-info", Static).update(f"[red]Error: {e}[/red]")
+            return
+
+        self._variables = variables
+        self._render_table()
+
+    def _render_table(self) -> None:
+        """Populate the table with the (filtered) variables."""
+        from mydba_tui.renderers.table import styled_cell
+
+        table = self.query_one("#vars-table", DataTable)
+        table.clear()
+        visible = self._visible_variables()
+        for name, value in visible:
+            display = (
+                value if len(value) <= self._VALUE_TRUNCATE else value[: self._VALUE_TRUNCATE] + "…"
+            )
+            table.add_row(styled_cell(name), styled_cell(display), key=name)
+
+        flags = f"  (filter: '{self._filter}')" if self._filter else ""
+        self.query_one("#vars-info", Static).update(
+            f"[bold]{len(visible)}[/bold] of {len(self._variables)} variables{flags}"
+        )
+
+    def _visible_variables(self) -> list[tuple[str, str]]:
+        """Apply the text filter across name and value."""
+        if not self._filter:
+            return self._variables
+        needle = self._filter.lower()
+        return [(n, v) for n, v in self._variables if needle in n.lower() or needle in v.lower()]
+
+    # --- Filter ---
+
+    def action_filter(self) -> None:
+        """Reveal the filter input and focus it."""
+        flt = self.query_one("#vars-filter", Input)
+        flt.add_class("visible")
+        flt.value = self._filter
+        flt.focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Apply the filter live as the user types."""
+        if event.input.id == "vars-filter":
+            self._filter = event.value.strip()
+            self._render_table()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Dismiss the filter input on Enter, keeping the filter applied."""
+        if event.input.id == "vars-filter":
+            self._close_filter(clear=False)
+
+    def on_key(self, event: events.Key) -> None:
+        """Escape while the filter is focused clears it and returns to table."""
+        if event.key != "escape":
+            return
+        flt = self.query_one("#vars-filter", Input)
+        if flt.has_focus:
+            event.stop()
+            self._close_filter(clear=True)
+
+    def _close_filter(self, *, clear: bool) -> None:
+        """Hide the filter input and return focus to the table."""
+        flt = self.query_one("#vars-filter", Input)
+        if clear:
+            flt.value = ""
+            self._filter = ""
+            self._render_table()
+        flt.remove_class("visible")
+        self.query_one("#vars-table", DataTable).focus()
+
+    # --- Detail ---
+
+    def _selected_variable(self) -> tuple[str, str] | None:
+        """Return the (name, value) of the selected row, if any."""
+        table = self.query_one("#vars-table", DataTable)
+        if table.row_count == 0:
+            return None
+        try:
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+        except Exception:
+            return None
+        if row_key.value is None:
+            return None
+        name = str(row_key.value)
+        return next(((n, v) for n, v in self._variables if n == name), None)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Show the full value of the selected variable on Enter."""
+        if event.data_table.id != "vars-table":
+            return
+        selected = self._selected_variable()
+        if selected is None:
+            return
+        name, value = selected
+        self.app.push_screen(_VariableDetailScreen(name, value))
 
 
 class _SessionDetailScreen(ModalScreen[None]):
@@ -581,3 +737,105 @@ class _SessionDetailScreen(ModalScreen[None]):
     def action_close(self) -> None:
         """Dismiss the modal."""
         self.dismiss(None)
+
+
+class _VariableDetailScreen(ModalScreen[None]):
+    """Modal showing a single variable's full name and value."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", key_display="Esc"),
+    ]
+
+    CSS = """
+    _VariableDetailScreen {
+        align: center middle;
+        background: $background 80%;
+    }
+
+    #var-detail-container {
+        width: 80%;
+        max-width: 120;
+        height: auto;
+        max-height: 80%;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+
+    #var-detail-title {
+        text-style: bold;
+        padding-bottom: 1;
+    }
+
+    #var-detail-body {
+        height: auto;
+        max-height: 28;
+        overflow-y: auto;
+    }
+    """
+
+    def __init__(self, name: str, value: str) -> None:
+        """Initialize with the variable name and value."""
+        super().__init__()
+        self._var_name: str = name
+        self._var_value: str = value
+
+    def compose(self) -> ComposeResult:
+        """Build the variable detail modal."""
+        with Vertical(id="var-detail-container"):
+            yield Static(self._var_name, id="var-detail-title")
+            body: str = self._var_value or "(empty)"
+            yield Static(body, id="var-detail-body")
+
+    def action_close(self) -> None:
+        """Dismiss the modal."""
+        self.dismiss(None)
+
+
+class AdministrationScreen(Screen[None]):
+    """Administration — tabbed operational views (Process List, Variables, ...)."""
+
+    BINDINGS = [
+        Binding("escape", "go_back", "Back", key_display="Esc"),
+        Binding("f10", "quit", "Exit", key_display="F10"),
+    ]
+
+    CSS = """
+    AdministrationScreen TabPane {
+        padding: 0;
+        height: 1fr;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        """Build the tabbed administration layout."""
+        yield Header()
+        yield StatusBar(id="status-bar")
+        with TabbedContent(id="admin-tabs"):
+            with TabPane("Process List", id="tab-processlist"):
+                yield ProcessListView()
+            with TabPane("Variables", id="tab-variables"):
+                yield VariablesView()
+        yield Footer()
+
+    def on_mount(self) -> None:
+        """Sync the status bar on mount."""
+        self._sync_status_bar()
+
+    def on_screen_resume(self) -> None:
+        """Sync status and refresh the active tab when returning."""
+        self._sync_status_bar()
+
+    def _sync_status_bar(self) -> None:
+        """Sync the status bar with the current connection state."""
+        status = getattr(self.app, "connection_status", "")
+        if status:
+            self.query_one("#status-bar", StatusBar).status_text = status
+
+    def action_go_back(self) -> None:
+        """Return to the object browser."""
+        self.app.pop_screen()
+
+    def action_quit(self) -> None:
+        """Exit the application."""
+        self.app.exit()

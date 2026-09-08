@@ -1,7 +1,11 @@
 """Tests for the Administration Process List screen logic."""
 
 from mydba_tui.services.processlist import ProcessRow
-from mydba_tui.ui.screens.administration import AdministrationScreen
+from mydba_tui.ui.screens.administration import (
+    AdministrationScreen,
+    ProcessListView,
+    VariablesView,
+)
 
 
 def _proc(**overrides: object) -> ProcessRow:
@@ -20,54 +24,61 @@ def _proc(**overrides: object) -> ProcessRow:
     return ProcessRow(**base)  # type: ignore[arg-type]
 
 
-def test_bindings_present() -> None:
-    """Screen exposes refresh, pause, filter, and kill bindings."""
+def test_screen_has_navigation_bindings() -> None:
+    """The screen shell owns navigation (back, exit)."""
     keys = [b.key for b in AdministrationScreen.BINDINGS]
-    for key in ("r", "p", "s", "slash", "k", "shift+k", "escape"):
+    assert "escape" in keys
+    assert "f10" in keys
+
+
+def test_process_list_view_bindings_present() -> None:
+    """The Process List view exposes refresh, pause, filter, and kill keys."""
+    keys = [b.key for b in ProcessListView.BINDINGS]
+    for key in ("r", "p", "s", "slash", "k", "K", "w"):
         assert key in keys, f"missing binding {key}"
 
 
 def test_matches_by_user() -> None:
     """Filter matches on the user field, case-insensitively."""
     proc = _proc(user="reporting")
-    assert AdministrationScreen._matches(proc, "report") is True
-    assert AdministrationScreen._matches(proc, "REPORT") is True
+    assert ProcessListView._matches(proc, "report") is True
+    assert ProcessListView._matches(proc, "REPORT") is True
 
 
 def test_matches_by_query_text() -> None:
     """Filter matches within the query (Info) text."""
     proc = _proc(info="UPDATE inventory SET qty = 0")
-    assert AdministrationScreen._matches(proc, "inventory") is True
+    assert ProcessListView._matches(proc, "inventory") is True
 
 
 def test_matches_no_hit() -> None:
     """Filter returns False when nothing contains the needle."""
     proc = _proc(user="app", info="SELECT 1")
-    assert AdministrationScreen._matches(proc, "zzz") is False
+    assert ProcessListView._matches(proc, "zzz") is False
 
 
 def test_hide_sleeping_filter() -> None:
     """_visible_processes hides Sleep sessions when the toggle is on."""
-    screen = AdministrationScreen()
-    screen._processes = [
+    view = ProcessListView()
+    view._processes = [
         _proc(id=1, command="Query"),
         _proc(id=2, command="Sleep"),
         _proc(id=3, command="Query"),
     ]
-    screen._hide_sleeping = True
-    visible = screen._visible_processes()
+    view._hide_sleeping = True
+    visible = view._visible_processes()
     assert {p.id for p in visible} == {1, 3}
 
 
 def test_text_filter_applied() -> None:
     """_visible_processes applies the text filter across fields."""
-    screen = AdministrationScreen()
-    screen._processes = [
+    view = ProcessListView()
+    view._processes = [
         _proc(id=1, user="app"),
         _proc(id=2, user="reporting"),
     ]
-    screen._filter = "report"
-    visible = screen._visible_processes()
+    view._filter = "report"
+    visible = view._visible_processes()
     assert [p.id for p in visible] == [2]
 
 
@@ -109,12 +120,6 @@ def test_workspace_snippet_empty_fields_render_as_none() -> None:
     assert "-- State: None" in snippet
 
 
-def test_open_in_workspace_binding_present() -> None:
-    """The 'w' binding opens the selected query in the SQL Workspace."""
-    keys = [b.key for b in AdministrationScreen.BINDINGS]
-    assert "w" in keys
-
-
 def test_long_state_truncated_in_display_only() -> None:
     """A long State is truncated for the table cell but not in the row data."""
     from mydba_tui.ui.screens.administration import _STATE_TRUNCATE
@@ -122,8 +127,8 @@ def test_long_state_truncated_in_display_only() -> None:
     long_state = "Source has sent all binlog to replica; waiting for more updates"
     proc = _proc(state=long_state)
 
-    screen = AdministrationScreen()
-    cells = screen._row_cells(proc)
+    view = ProcessListView()
+    cells = view._row_cells(proc)
     # State cell is index 6 (Id, User, Host, db, Command, Time, State, ...).
     state_cell = cells[6].plain
     assert state_cell.endswith("…")
@@ -158,3 +163,31 @@ def test_workspace_snippet_time_is_human_readable() -> None:
     proc = _proc(time=11760)
     snippet = _build_workspace_snippet(proc)
     assert "-- Time: 11760 (3h 16m 0s)" in snippet
+
+
+def test_variables_view_bindings_present() -> None:
+    """The Variables view exposes refresh and filter keys."""
+    keys = [b.key for b in VariablesView.BINDINGS]
+    assert "r" in keys
+    assert "slash" in keys
+
+
+def test_variables_filter_matches_name_and_value() -> None:
+    """The Variables filter matches across both name and value."""
+    view = VariablesView()
+    view._variables = [
+        ("max_connections", "151"),
+        ("innodb_buffer_pool_size", "134217728"),
+        ("version", "8.4.0"),
+    ]
+
+    view._filter = "buffer"
+    assert [n for n, _ in view._visible_variables()] == ["innodb_buffer_pool_size"]
+
+    # Match on value.
+    view._filter = "8.4.0"
+    assert [n for n, _ in view._visible_variables()] == ["version"]
+
+    # No filter returns everything.
+    view._filter = ""
+    assert len(view._visible_variables()) == 3

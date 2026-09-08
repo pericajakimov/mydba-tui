@@ -4,6 +4,7 @@ from mydba_tui.services.processlist import ProcessRow
 from mydba_tui.ui.screens.administration import (
     AdministrationScreen,
     ProcessListView,
+    StatusView,
     VariablesView,
 )
 
@@ -172,22 +173,40 @@ def test_variables_view_bindings_present() -> None:
     assert "slash" in keys
 
 
-def test_variables_filter_matches_name_and_value() -> None:
-    """The Variables filter matches across both name and value."""
+def test_status_view_bindings_present() -> None:
+    """The Status view exposes refresh and filter keys."""
+    keys = [b.key for b in StatusView.BINDINGS]
+    assert "r" in keys
+    assert "slash" in keys
+
+
+def test_keyvalue_filter_matches_name_and_value() -> None:
+    """The key/value filter matches across both name and value."""
     view = VariablesView()
-    view._variables = [
+    view._rows = [
         ("max_connections", "151"),
         ("innodb_buffer_pool_size", "134217728"),
         ("version", "8.4.0"),
     ]
 
     view._filter = "buffer"
-    assert [n for n, _ in view._visible_variables()] == ["innodb_buffer_pool_size"]
+    assert [n for n, _ in view._visible_rows()] == ["innodb_buffer_pool_size"]
 
     # Match on value.
     view._filter = "8.4.0"
-    assert [n for n, _ in view._visible_variables()] == ["version"]
+    assert [n for n, _ in view._visible_rows()] == ["version"]
 
     # No filter returns everything.
     view._filter = ""
-    assert len(view._visible_variables()) == 3
+    assert len(view._visible_rows()) == 3
+
+
+def test_view_config_differs() -> None:
+    """Variables and Status views declare distinct DOM prefixes and nouns."""
+    assert VariablesView.id_prefix == "vars"
+    assert StatusView.id_prefix == "status"
+    assert VariablesView.noun == "variables"
+    assert StatusView.noun == "status values"
+    # Status reloads each visit; variables load once.
+    assert VariablesView.load_once is True
+    assert StatusView.load_once is False

@@ -25,6 +25,7 @@ from mydba_tui.services.processlist import (
     fetch_processes,
     kill_session,
 )
+from mydba_tui.services.status import fetch_status
 from mydba_tui.services.variables import fetch_variables
 from mydba_tui.ui.screens.workspace import WorkspaceScreen
 from mydba_tui.ui.widgets import ConfirmDialog, StatusBar
@@ -480,8 +481,14 @@ class ProcessListView(Vertical):
         self.app.push_screen("workspace")
 
 
-class VariablesView(Vertical):
-    """Variables section — all global variables with client-side filtering."""
+class KeyValueView(Vertical):
+    """Base for a filterable, refreshable key/value table section.
+
+    Subclasses supply the section specifics: a DOM id prefix, column headers,
+    a plural noun for the info line, and a fetch function that returns sorted
+    ``(name, value)`` pairs. The base provides the table, client-side filter
+    (matching name and value), manual refresh, and a full-value detail modal.
+    """
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh", key_display="R", priority=True),
@@ -489,27 +496,27 @@ class VariablesView(Vertical):
     ]
 
     DEFAULT_CSS = """
-    VariablesView {
+    KeyValueView {
         height: 1fr;
     }
 
-    VariablesView #vars-info {
+    KeyValueView .kv-info {
         height: 1;
         color: $text-muted;
         padding: 0 1;
     }
 
-    VariablesView #vars-table {
+    KeyValueView .kv-table {
         height: 1fr;
     }
 
-    VariablesView #vars-filter {
+    KeyValueView .kv-filter {
         display: none;
         dock: bottom;
         border: tall $accent;
     }
 
-    VariablesView #vars-filter.visible {
+    KeyValueView .kv-filter.visible {
         display: block;
     }
     """
@@ -517,65 +524,92 @@ class VariablesView(Vertical):
     # Value truncation in the table; full value shown in the detail modal.
     _VALUE_TRUNCATE = 100
 
+    # --- Subclass configuration (override these) ---
+    id_prefix: str = "kv"
+    name_column: str = "Name"
+    value_column: str = "Value"
+    noun: str = "entries"
+    load_once: bool = False  # if True, only auto-loads on first tab show
+
+    def _fetch(self, connection: object) -> list[tuple[str, str]]:
+        """Return sorted (name, value) pairs. Subclasses must override."""
+        raise NotImplementedError
+
     def __init__(self) -> None:
-        """Initialize variables state."""
+        """Initialize key/value state."""
         super().__init__()
-        self._variables: list[tuple[str, str]] = []
+        self._rows: list[tuple[str, str]] = []
         self._filter: str = ""
 
+    # --- DOM helpers ---
+
+    @property
+    def _info_id(self) -> str:
+        return f"{self.id_prefix}-info"
+
+    @property
+    def _table_id(self) -> str:
+        return f"{self.id_prefix}-table"
+
+    @property
+    def _filter_id(self) -> str:
+        return f"{self.id_prefix}-filter"
+
     def compose(self) -> ComposeResult:
-        """Build the variables layout."""
-        yield Static("", id="vars-info")
-        table: DataTable[Text] = DataTable(id="vars-table", zebra_stripes=True)
+        """Build the key/value layout."""
+        yield Static("", id=self._info_id, classes="kv-info")
+        table: DataTable[Text] = DataTable(
+            id=self._table_id, classes="kv-table", zebra_stripes=True
+        )
         table.cursor_type = "row"
         yield table
         yield Input(
             placeholder="Filter (name or value) — Enter to keep, Esc to clear",
-            id="vars-filter",
+            id=self._filter_id,
+            classes="kv-filter",
         )
 
     def on_mount(self) -> None:
         """Set up the table columns and load once."""
-        table = self.query_one("#vars-table", DataTable)
-        table.add_column("Variable", key="name")
-        table.add_column("Value", key="value")
+        table = self.query_one(f"#{self._table_id}", DataTable)
+        table.add_column(self.name_column, key="name")
+        table.add_column(self.value_column, key="value")
         self.action_refresh()
 
     def refresh_data(self) -> None:
         """Public hook to (re)load data when the tab is shown."""
-        # Load only if not loaded yet; variables rarely change.
-        if not self._variables:
-            self.action_refresh()
+        if self.load_once and self._rows:
+            return
+        self.action_refresh()
 
     # --- Data loading ---
 
     def action_refresh(self) -> None:
-        """Reload global variables (synchronous, single-threaded connection)."""
+        """Reload data (synchronous, single-threaded connection)."""
         from mydba_tui.connection import ConnectionResult
 
+        info = self.query_one(f"#{self._info_id}", Static)
         conn_result = getattr(self.app, "db_connection", None)
         if conn_result is None or not isinstance(conn_result, ConnectionResult):
-            self.query_one("#vars-info", Static).update(
-                "[yellow]Not connected to a database.[/yellow]"
-            )
+            info.update("[yellow]Not connected to a database.[/yellow]")
             return
 
         try:
-            variables = fetch_variables(conn_result.connection)
+            rows = self._fetch(conn_result.connection)
         except Exception as e:
-            self.query_one("#vars-info", Static).update(f"[red]Error: {e}[/red]")
+            info.update(f"[red]Error: {e}[/red]")
             return
 
-        self._variables = variables
+        self._rows = rows
         self._render_table()
 
     def _render_table(self) -> None:
-        """Populate the table with the (filtered) variables."""
+        """Populate the table with the (filtered) rows."""
         from mydba_tui.renderers.table import styled_cell
 
-        table = self.query_one("#vars-table", DataTable)
+        table = self.query_one(f"#{self._table_id}", DataTable)
         table.clear()
-        visible = self._visible_variables()
+        visible = self._visible_rows()
         for name, value in visible:
             display = (
                 value if len(value) <= self._VALUE_TRUNCATE else value[: self._VALUE_TRUNCATE] + "…"
@@ -583,61 +617,61 @@ class VariablesView(Vertical):
             table.add_row(styled_cell(name), styled_cell(display), key=name)
 
         flags = f"  (filter: '{self._filter}')" if self._filter else ""
-        self.query_one("#vars-info", Static).update(
-            f"[bold]{len(visible)}[/bold] of {len(self._variables)} variables{flags}"
+        self.query_one(f"#{self._info_id}", Static).update(
+            f"[bold]{len(visible)}[/bold] of {len(self._rows)} {self.noun}{flags}"
         )
 
-    def _visible_variables(self) -> list[tuple[str, str]]:
+    def _visible_rows(self) -> list[tuple[str, str]]:
         """Apply the text filter across name and value."""
         if not self._filter:
-            return self._variables
+            return self._rows
         needle = self._filter.lower()
-        return [(n, v) for n, v in self._variables if needle in n.lower() or needle in v.lower()]
+        return [(n, v) for n, v in self._rows if needle in n.lower() or needle in v.lower()]
 
     # --- Filter ---
 
     def action_filter(self) -> None:
         """Reveal the filter input and focus it."""
-        flt = self.query_one("#vars-filter", Input)
+        flt = self.query_one(f"#{self._filter_id}", Input)
         flt.add_class("visible")
         flt.value = self._filter
         flt.focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Apply the filter live as the user types."""
-        if event.input.id == "vars-filter":
+        if event.input.id == self._filter_id:
             self._filter = event.value.strip()
             self._render_table()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Dismiss the filter input on Enter, keeping the filter applied."""
-        if event.input.id == "vars-filter":
+        if event.input.id == self._filter_id:
             self._close_filter(clear=False)
 
     def on_key(self, event: events.Key) -> None:
         """Escape while the filter is focused clears it and returns to table."""
         if event.key != "escape":
             return
-        flt = self.query_one("#vars-filter", Input)
+        flt = self.query_one(f"#{self._filter_id}", Input)
         if flt.has_focus:
             event.stop()
             self._close_filter(clear=True)
 
     def _close_filter(self, *, clear: bool) -> None:
         """Hide the filter input and return focus to the table."""
-        flt = self.query_one("#vars-filter", Input)
+        flt = self.query_one(f"#{self._filter_id}", Input)
         if clear:
             flt.value = ""
             self._filter = ""
             self._render_table()
         flt.remove_class("visible")
-        self.query_one("#vars-table", DataTable).focus()
+        self.query_one(f"#{self._table_id}", DataTable).focus()
 
     # --- Detail ---
 
-    def _selected_variable(self) -> tuple[str, str] | None:
+    def _selected_pair(self) -> tuple[str, str] | None:
         """Return the (name, value) of the selected row, if any."""
-        table = self.query_one("#vars-table", DataTable)
+        table = self.query_one(f"#{self._table_id}", DataTable)
         if table.row_count == 0:
             return None
         try:
@@ -647,17 +681,45 @@ class VariablesView(Vertical):
         if row_key.value is None:
             return None
         name = str(row_key.value)
-        return next(((n, v) for n, v in self._variables if n == name), None)
+        return next(((n, v) for n, v in self._rows if n == name), None)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Show the full value of the selected variable on Enter."""
-        if event.data_table.id != "vars-table":
+        """Show the full value of the selected row on Enter."""
+        if event.data_table.id != self._table_id:
             return
-        selected = self._selected_variable()
+        selected = self._selected_pair()
         if selected is None:
             return
         name, value = selected
-        self.app.push_screen(_VariableDetailScreen(name, value))
+        self.app.push_screen(_KeyValueDetailScreen(name, value))
+
+
+class VariablesView(KeyValueView):
+    """Variables section — all global variables with client-side filtering."""
+
+    id_prefix = "vars"
+    name_column = "Variable"
+    value_column = "Value"
+    noun = "variables"
+    load_once = True  # variables rarely change
+
+    def _fetch(self, connection: object) -> list[tuple[str, str]]:
+        """Fetch global variables."""
+        return fetch_variables(connection)  # type: ignore[arg-type]
+
+
+class StatusView(KeyValueView):
+    """Status section — all global status counters with client-side filtering."""
+
+    id_prefix = "status"
+    name_column = "Status Variable"
+    value_column = "Value"
+    noun = "status values"
+    load_once = False  # counters change; reload each time the tab is shown
+
+    def _fetch(self, connection: object) -> list[tuple[str, str]]:
+        """Fetch global status counters."""
+        return fetch_status(connection)  # type: ignore[arg-type]
 
 
 class _SessionDetailScreen(ModalScreen[None]):
@@ -739,15 +801,15 @@ class _SessionDetailScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
-class _VariableDetailScreen(ModalScreen[None]):
-    """Modal showing a single variable's full name and value."""
+class _KeyValueDetailScreen(ModalScreen[None]):
+    """Modal showing a single key/value entry's full name and value."""
 
     BINDINGS = [
         Binding("escape", "close", "Close", key_display="Esc"),
     ]
 
     CSS = """
-    _VariableDetailScreen {
+    _KeyValueDetailScreen {
         align: center middle;
         background: $background 80%;
     }
@@ -816,6 +878,8 @@ class AdministrationScreen(Screen[None]):
                 yield ProcessListView()
             with TabPane("Variables", id="tab-variables"):
                 yield VariablesView()
+            with TabPane("Status", id="tab-status"):
+                yield StatusView()
         yield Footer()
 
     def on_mount(self) -> None:
@@ -825,6 +889,16 @@ class AdministrationScreen(Screen[None]):
     def on_screen_resume(self) -> None:
         """Sync status and refresh the active tab when returning."""
         self._sync_status_bar()
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Refresh the newly activated tab's data (respects each view's policy)."""
+        pane = event.tabbed_content.get_pane(event.tab)
+        if pane is None:
+            return
+        for view in pane.walk_children(KeyValueView):
+            view.refresh_data()
+        for pl in pane.walk_children(ProcessListView):
+            pl.refresh_data()
 
     def _sync_status_bar(self) -> None:
         """Sync the status bar with the current connection state."""

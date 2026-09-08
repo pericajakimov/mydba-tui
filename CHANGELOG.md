@@ -17,6 +17,8 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 - Variables tab: all global variables as a sorted Variable/Value table with
   immediate name+value filtering, manual refresh, and a full-value view on
   Enter.
+- Status tab: all global status counters in the same key/value presentation;
+  reloads on each visit since counters change over time.
 - Process List: a live view of active MySQL sessions, now the first
   Administration tab. The query source is chosen per server
   (`performance_schema.processlist` for MySQL 8.0+, `information_schema` for

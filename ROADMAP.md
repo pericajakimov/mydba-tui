@@ -39,8 +39,8 @@ Implemented:
 In progress / next:
 
 - Administration — tabbed screen with Process List (live, filterable, kill
-  sessions, open query in workspace) and Variables (all globals, filterable);
-  Users, Replication, Status, Locks next
+  sessions, open query in workspace), Variables, and Status (filterable
+  key/value views); Users, Replication, Locks next
 - Monitoring (server activity, live metrics, lightweight graphs)
 - Polish (performance, rendering, error handling, additional themes)
 
@@ -108,9 +108,9 @@ In progress / next:
 
 - Process List ✅
 - Variables ✅
+- Status ✅
 - Users
 - Replication
-- Status
 - Transactions
 - Locks
 - Metadata Locks

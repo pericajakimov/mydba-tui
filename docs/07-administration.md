@@ -188,9 +188,18 @@ table, sorted by name.
 
 # Status
 
-The Status section provides access to global status counters.
+The Status section provides access to global status counters. It is a tab in
+the Administration screen and shares the same key/value presentation as the
+Variables tab.
 
-Dynamic filtering should allow quick location of individual status values.
+It lists all global status counters (from `SHOW GLOBAL STATUS`) as a
+Name/Value table, sorted by name.
+
+- Filtering (`/`) is immediate and matches across both the counter name and its
+  value. `Esc` clears the filter.
+- Refresh (`r`) reloads on demand. Unlike Variables, Status also reloads each
+  time the tab is shown, since counters change over time.
+- `Enter` opens the full value of the selected counter.
 
 This section belongs to operational information rather than configuration.
 

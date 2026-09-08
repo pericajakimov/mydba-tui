@@ -18,23 +18,35 @@ The project focuses on making experienced DBAs more productive through a fast, k
 
 # Current Status
 
-**Project Phase:** Bootstrap
+**Project Phase:** Active development
 
-Current work focuses on:
+The core interactive workflow is implemented. A DBA can connect to a server,
+browse metadata, and write and run SQL end to end.
 
-- Project architecture
-- Documentation
-- Repository structure
-- Development environment
-- Core framework
+Implemented:
 
-No functional features have been implemented yet.
+- Foundation — TUI application, logging, configuration, theme support
+- Connection Manager — profiles, environment grouping, backend detection,
+  `.my.cnf` / `.mylogin.cnf`, SSL, SSH tunnel, explicit Reconnect
+- Object Browser — schemas, tables, views, routines, events, triggers, DDL,
+  dependencies, grants, sample data
+- SQL Workspace — editor, MySQL syntax highlighting, execution, EXPLAIN,
+  vertical output, JSON rendering, session logging, autocomplete, formatter
+- Export Framework — pluggable, auto-discovered exporters (CSV, CSV-semicolon,
+  TSV, SQL INSERT/batch, JSONL, JSON, XML, HTML, Markdown), interactive and
+  streaming direct export
+
+In progress / next:
+
+- Administration (process list, users, replication, variables, status, locks)
+- Monitoring (server activity, live metrics, lightweight graphs)
+- Polish (performance, rendering, error handling, additional themes)
 
 ---
 
 # Milestones
 
-## Milestone 1 — Foundation
+## Milestone 1 — Foundation ✅ Done
 
 - Repository bootstrap
 - Project documentation
@@ -46,7 +58,7 @@ No functional features have been implemented yet.
 
 ---
 
-## Milestone 2 — Connection Manager
+## Milestone 2 — Connection Manager ✅ Done
 
 - Connection profiles
 - Environment grouping
@@ -55,10 +67,11 @@ No functional features have been implemented yet.
 - `.mylogin.cnf` integration
 - SSL support
 - SSH tunnel support
+- Reconnect
 
 ---
 
-## Milestone 3 — Object Browser
+## Milestone 3 — Object Browser ✅ Done
 
 - Schemas
 - Tables
@@ -74,7 +87,7 @@ No functional features have been implemented yet.
 
 ---
 
-## Milestone 4 — SQL Workspace
+## Milestone 4 — SQL Workspace ✅ Done
 
 - SQL editor
 - Syntax highlighting
@@ -84,10 +97,12 @@ No functional features have been implemented yet.
 - JSON rendering
 - EXPLAIN support
 - SQL logging
+- SQL autocomplete
+- SQL formatter
 
 ---
 
-## Milestone 5 — Administration
+## Milestone 5 — Administration 🔜 Next
 
 - Process List
 - Users
@@ -102,7 +117,7 @@ No functional features have been implemented yet.
 
 ---
 
-## Milestone 6 — Monitoring
+## Milestone 6 — Monitoring 🔜 Next
 
 - Server activity overview
 - Connection usage
@@ -113,19 +128,22 @@ No functional features have been implemented yet.
 
 ---
 
-## Milestone 7 — Export Framework
+## Milestone 7 — Export Framework ✅ Done
 
-- CSV
+- CSV (comma and semicolon)
 - TSV
-- SQL INSERT
+- SQL INSERT (single and batch)
 - JSONL
-- Streaming exports
-- Progress reporting
-- Plugin-based exporter interface
+- JSON
+- XML
+- HTML
+- Markdown
+- Streaming (direct) exports
+- Plugin-based, auto-discovered exporter interface
 
 ---
 
-## Milestone 8 — Polish
+## Milestone 8 — Polish 🔜 Planned
 
 - UI improvements
 - Performance tuning
@@ -154,10 +172,10 @@ The first stable release will include:
 
 Potential future enhancements include:
 
-- SQL autocomplete
 - Search
 - Command palette
-- Additional exporters
+- Query history across sessions
+- Additional exporters (Excel, Parquet, compressed output)
 - Advanced dependency analysis
 - Vendor-specific plugins
 - Performance improvements

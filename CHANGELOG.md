@@ -10,8 +10,12 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 
 ### Added
 
-#### Connection
+#### Connection Manager
 
+- Connection profiles with environment grouping and backend/vendor detection.
+- Credential resolution from profile fields, `.mylogin.cnf` login paths, and
+  `.my.cnf` option files.
+- SSL and SSH tunnel support.
 - Reconnect action (`X` in the Object Browser, `Ctrl+Shift+X` in the SQL
   Workspace). Closes the existing connection and SSH tunnel, re-establishes a
   fresh MySQL session against the current profile, and reloads all metadata.
@@ -19,103 +23,49 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
   switching to a different profile endpoint rotates the session log and clears
   the editor and results.
 
-#### Repository
+#### Object Browser
 
-- Initial repository structure.
-- Bootstrap documentation.
-- Architecture documentation.
-- Developer documentation.
-- Contribution guidelines.
-- Initial ADRs.
+- Metadata browsing for schemas, tables, views, procedures, functions, events,
+  and triggers.
+- Per-object tabs: General, Columns, Indexes, Partitions, Foreign Keys,
+  Triggers, Grants, Dependencies, DDL, and Sample Data.
+- Dependency Analysis Engine using sqlglot to parse procedural SQL and build a
+  bidirectional dependency graph with foreign-key labels.
 
-#### Project Vision
+#### SQL Workspace
 
-- Defined long-term vision.
-- Established project philosophy.
-- Defined design principles.
-- Documented roadmap.
+- Interactive SQL editor with a custom MySQL syntax highlighter covering
+  procedural SQL.
+- Query execution with typed, colored result output and JSON highlighting.
+- EXPLAIN, EXPLAIN FORMAT=JSON, and EXPLAIN ANALYZE.
+- Vertical (`\G`) output, horizontal scrolling, and a configurable row display
+  limit.
+- Session log with owner-only permissions, human-readable durations, and
+  save-to-file support.
+- Context-aware autocomplete (statement starters, schema objects, and columns
+  after a dot), triggered by typing.
+- SQL formatter (`Ctrl+Shift+F`) built on sqlglot with configurable rules.
 
-#### Architecture
+#### Export Framework
 
-- Defined modular architecture.
-- Established SQL-first architecture.
-- Established plugin architecture.
-- Defined packaging strategy.
-- Defined configuration strategy.
-- Defined coding standards.
+- Pluggable, auto-discovered exporters: CSV, CSV (semicolon), TSV,
+  SQL INSERT, SQL INSERT (batch), JSONL, JSON, XML, HTML, and Markdown.
+- Interactive export (`Ctrl+E`) of the last result set.
+- Direct export (`Ctrl+Shift+E`) that streams query results straight to a file.
 
-#### User Interface
+#### Configuration
 
-- Defined keyboard-first navigation.
-- Defined metadata-first Object Browser.
-- Defined SQL Workspace.
-- Defined rendering strategy.
-- Defined Monitoring page.
-- Defined Administration pages.
-- Defined Export Framework.
-- Defined connection management.
+- Documented `settings.yaml` with human-readable durations.
 
-#### Development
+#### Tooling
 
-- Defined repository naming.
-- Defined package naming.
-- Defined executable naming.
-- Established development workflow.
-- Selected Python 3.12+.
-- Adopted type hints.
-- Adopted dataclasses.
-- Adopted Google-style docstrings.
+- `make all` target that runs format, lint, typecheck, test, then the app.
 
-#### Logging
+#### Foundation
 
-- Defined application logging.
-- Defined SQL logging.
-- Established SQL transparency as a core design principle.
-
-#### Documentation
-
-Added the following project documentation:
-
-```
-README.md
-
-CONTRIBUTING.md
-
-ROADMAP.md
-
-CHANGELOG.md
-
-docs/
-    00-vision.md
-    01-philosophy.md
-    02-architecture.md
-    03-ui-principles.md
-    04-navigation.md
-    05-connection-manager.md
-    06-object-browser.md
-    07-administration.md
-    08-sql-workspace.md
-    09-rendering.md
-    10-monitoring.md
-    11-export-framework.md
-    12-security.md
-    13-configuration.md
-    14-packaging.md
-    15-plugin-architecture.md
-    16-coding-standards.md
-    17-roadmap.md
-    18-decision-log.md
-    19-developer-guide.md
-
-adr/
-    ADR-0001-project-name.md
-    ADR-0002-one-process-one-connection.md
-    ADR-0003-metadata-first.md
-    ADR-0004-transparent-sql.md
-    ADR-0005-keyboard-first.md
-    ADR-0006-one-endpoint-per-profile.md
-    ADR-0007-sql-first.md
-```
+- Textual TUI application shell, theme support, application and SQL logging,
+  and the configuration framework.
+- Project documentation set (`docs/`), ADRs, and contribution guidelines.
 
 ---
 

@@ -181,9 +181,14 @@ assets/
 
 ## Development Status
 
-This repository currently contains the architecture, design documentation, and project bootstrap.
+The core interactive workflow is implemented: connecting to a server via
+profiles (SSL, SSH tunnel, `.my.cnf` / `.mylogin.cnf`), browsing metadata in
+the Object Browser, and writing and running SQL in the SQL Workspace
+(highlighting, EXPLAIN, autocomplete, formatting, session logging, and a
+pluggable export framework).
 
-Implementation will follow the documented architecture.
+Administration, Monitoring, and polish are the next areas of work. See
+[`ROADMAP.md`](ROADMAP.md) for the current status of each milestone.
 
 ---
 

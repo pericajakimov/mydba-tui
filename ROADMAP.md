@@ -38,7 +38,8 @@ Implemented:
 
 In progress / next:
 
-- Administration (process list, users, replication, variables, status, locks)
+- Administration — Process List implemented (live, filterable, kill sessions,
+  open query in workspace); Users, Replication, Variables, Status, Locks next
 - Monitoring (server activity, live metrics, lightweight graphs)
 - Polish (performance, rendering, error handling, additional themes)
 
@@ -102,9 +103,9 @@ In progress / next:
 
 ---
 
-## Milestone 5 — Administration 🔜 Next
+## Milestone 5 — Administration 🚧 In progress
 
-- Process List
+- Process List ✅
 - Users
 - Replication
 - Variables

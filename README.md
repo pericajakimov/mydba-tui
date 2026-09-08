@@ -187,8 +187,10 @@ the Object Browser, and writing and running SQL in the SQL Workspace
 (highlighting, EXPLAIN, autocomplete, formatting, session logging, and a
 pluggable export framework).
 
-Administration, Monitoring, and polish are the next areas of work. See
-[`ROADMAP.md`](ROADMAP.md) for the current status of each milestone.
+Administration has begun with a live Process List (view active sessions, filter,
+kill a query or connection, open a session's query in the SQL Workspace).
+Further Administration sections, Monitoring, and polish are the next areas of
+work. See [`ROADMAP.md`](ROADMAP.md) for the current status of each milestone.
 
 ---
 

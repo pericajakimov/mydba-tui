@@ -10,13 +10,11 @@ and auto-deleted on clean exit unless explicitly saved.
 import os
 import re
 import time as _time
-from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from rich.markup import escape as rich_escape
-from rich.style import Style
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -24,6 +22,10 @@ from textual.containers import ScrollableContainer, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input, Static, TextArea
 
+from mydba_tui.renderers.table import S_BORDER as _S_BORDER
+from mydba_tui.renderers.table import S_HEADER as _S_HEADER
+from mydba_tui.renderers.table import format_cell as _format_cell
+from mydba_tui.renderers.table import styled_cell as _styled_cell
 from mydba_tui.ui.widgets import StatusBar
 from mydba_tui.ui.widgets.sql_editor import SQLEditor
 
@@ -171,6 +173,7 @@ class WorkspaceScreen(Screen[None]):
         self._session_saved: bool = False
         self._row_limit_idx: int = 2  # Default: 1000
         self._results_store: list[tuple[list[str], list[Any]]] = []
+        self._pending_query: str | None = None
 
     def compose(self) -> ComposeResult:
         """Build the workspace layout."""
@@ -200,9 +203,18 @@ class WorkspaceScreen(Screen[None]):
         editor.theme = SQL_THEME_NAME
         editor.focus()
 
+        # Apply any query queued before the screen was mounted.
+        if self._pending_query is not None:
+            pending, self._pending_query = self._pending_query, None
+            self._apply_loaded_query(pending)
+
     def on_screen_resume(self) -> None:
         """Update status bar when returning to this screen."""
         self._sync_status_bar()
+        # Apply any query queued while the screen was not active.
+        if self._pending_query is not None:
+            pending, self._pending_query = self._pending_query, None
+            self._apply_loaded_query(pending)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Trigger autocomplete on typing in the SQL editor."""
@@ -330,6 +342,40 @@ class WorkspaceScreen(Screen[None]):
         """
         if self.is_mounted:
             self._sync_status_bar()
+
+    def load_query(self, text: str) -> None:
+        """Load SQL text into the editor.
+
+        If the editor is empty, the text replaces its contents; otherwise the
+        text is appended below the existing content (separated by a blank line)
+        so work in progress is never lost. The editor is focused afterward so
+        EXPLAIN/execute keys are immediately usable.
+
+        Safe to call before the screen is mounted: the text is queued and
+        applied once the editor exists (see on_mount).
+
+        Args:
+            text: The SQL text (optionally with leading comment metadata) to
+                load.
+        """
+        if not self.is_mounted:
+            # Screen not mounted yet — queue and apply in on_mount.
+            self._pending_query = text
+            return
+        self._apply_loaded_query(text)
+
+    def _apply_loaded_query(self, text: str) -> None:
+        """Insert loaded query text into the editor (editor must exist)."""
+        editor = self.query_one("#sql-editor", SQLEditor).editor
+        existing = editor.text
+        if existing.strip():
+            separator = "\n\n" if not existing.endswith("\n") else "\n"
+            editor.text = existing + separator + text
+        else:
+            editor.text = text
+        # Place the cursor at the end and focus so EXPLAIN/execute is ready.
+        editor.move_cursor(editor.document.end)
+        editor.focus()
 
     # --- Execution ---
 
@@ -1303,146 +1349,6 @@ def _apply_format_rules(sql: str, app: Any) -> str:
         sql = "\n".join(adjusted)
 
     return sql
-
-
-def _format_cell(val: Any) -> str:
-    """Format a cell value for workspace display.
-
-    Workspace shows full data:
-    - Binary → always hex
-    - Text → full content (no truncation)
-    - NULL → literal "NULL" string
-    """
-    if val is None:
-        return "NULL"
-    if isinstance(val, (bytes, bytearray)):
-        return "0x" + val.hex().upper()
-    return str(val)
-
-
-# --- Result coloring ---
-
-_S_NULL = Style(color="#666666", italic=True)  # Gray — NULL
-_S_NUMBER = Style(color="#b5cea8")  # Light green — integers
-_S_DECIMAL = Style(color="#d7ba7d")  # Warm gold — decimals/floats
-_S_STRING = Style(color="#ce9178")  # Orange — strings (same as SQL editor)
-_S_DATE = Style(color="#4ec9b0")  # Teal — dates/times
-_S_BINARY = Style(color="#c586c0")  # Purple — binary/hex
-_S_BORDER = Style(color="#555555")  # Dark gray — table borders
-_S_HEADER = Style(bold=True)  # Bold — column headers
-_S_JSON_KEY = Style(color="#569cd6")  # Blue — JSON keys
-_S_JSON_STRING = Style(color="#ce9178")  # Orange — JSON strings
-_S_JSON_NUMBER = Style(color="#b5cea8")  # Light green — JSON numbers
-_S_JSON_BOOL = Style(color="#7daf9c")  # Muted teal — JSON booleans/null
-_S_JSON_BRACE = Style(color="#cccccc")  # Light gray — braces/brackets
-
-
-def _cell_style(val: Any) -> Style:
-    """Determine the display style for a cell value based on its Python type."""
-    if val is None:
-        return _S_NULL
-    if isinstance(val, (bytes, bytearray)):
-        return _S_BINARY
-    if isinstance(val, int):
-        return _S_NUMBER
-    if isinstance(val, (float, Decimal)):
-        return _S_DECIMAL
-    if isinstance(val, (datetime, date, time, timedelta)):
-        return _S_DATE
-    # Check for date/time types from mysql-connector
-    s = str(val)
-    # Detect datetime-like strings (from cursor)
-    if _looks_like_datetime(s):
-        return _S_DATE
-    return _S_STRING
-
-
-def _looks_like_datetime(s: str) -> bool:
-    """Quick check if a string looks like a date/datetime."""
-    if len(s) >= 10 and s[4:5] == "-" and s[7:8] == "-":
-        return True  # YYYY-MM-DD...
-    if len(s) == 8 and s[2:3] == ":" and s[5:6] == ":":
-        return True  # HH:MM:SS
-    return False
-
-
-def _is_json(s: str) -> bool:
-    """Quick check if a string looks like JSON."""
-    stripped = s.strip()
-    if not stripped:
-        return False
-    if (stripped[0] == "{" and stripped[-1] == "}") or (stripped[0] == "[" and stripped[-1] == "]"):
-        import json
-
-        try:
-            json.loads(stripped)
-            return True
-        except (json.JSONDecodeError, ValueError):
-            return False
-    return False
-
-
-_JSON_TOKEN_RE = re.compile(
-    r"""
-    (?P<string>"(?:[^"\\]|\\.)*")  |
-    (?P<number>-?\d+\.?\d*(?:[eE][+-]?\d+)?)  |
-    (?P<bool>true|false|null)  |
-    (?P<brace>[{}\[\]])  |
-    (?P<punct>[,:])  |
-    (?P<ws>\s+)  |
-    (?P<other>.)
-    """,
-    re.VERBOSE,
-)
-
-
-def _highlight_json(s: str) -> Text:
-    """Highlight a JSON string with colors."""
-    text = Text()
-    # Track if previous non-ws token was a key (string followed by :)
-    tokens = list(_JSON_TOKEN_RE.finditer(s))
-    for idx, match in enumerate(tokens):
-        token = match.group()
-        kind = match.lastgroup
-
-        if kind == "string":
-            # Check if this string is a key (followed by :)
-            is_key = False
-            for lookahead in tokens[idx + 1 :]:
-                if lookahead.lastgroup == "ws":
-                    continue
-                if lookahead.group() == ":":
-                    is_key = True
-                break
-            if is_key:
-                text.append(token, style=_S_JSON_KEY)
-            else:
-                text.append(token, style=_S_JSON_STRING)
-        elif kind == "number":
-            text.append(token, style=_S_JSON_NUMBER)
-        elif kind == "bool":
-            text.append(token, style=_S_JSON_BOOL)
-        elif kind == "brace":
-            text.append(token, style=_S_JSON_BRACE)
-        elif kind == "punct":
-            text.append(token, style=_S_JSON_BRACE)
-        else:
-            text.append(token)
-    return text
-
-
-def _styled_cell(val: Any) -> Text:
-    """Create a styled Text for a single cell value."""
-    s = _format_cell(val)
-    style = _cell_style(val)
-
-    # If it's a string value and looks like JSON, highlight it
-    if style == _S_STRING and isinstance(val, str) and _is_json(val):
-        return _highlight_json(val)
-
-    t = Text(s)
-    t.stylize(style)
-    return t
 
 
 def _build_table_text(col_names: list[str], rows: list[Any], fmt: str) -> Text:

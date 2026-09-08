@@ -10,6 +10,25 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 
 ### Added
 
+#### Administration
+
+- Process List: a live view of active MySQL sessions, reached from the Object
+  Browser (`A`). The query source is chosen per server
+  (`performance_schema.processlist` for MySQL 8.0+, `information_schema` for
+  MariaDB, `SHOW FULL PROCESSLIST` otherwise).
+- Columns: Id, User, Host (IP only), db, Command, Time, State, Program, Info.
+  The Program name is sourced from `session_connect_attrs` on the
+  performance_schema path.
+- Auto-refresh on an interval, pausable and resumable, with manual refresh and
+  cursor position preserved across refreshes.
+- Immediate client-side filtering across fields and a hide-sleeping toggle.
+- Session detail view (`Enter`) showing all fields in full plus the
+  syntax-highlighted query.
+- Terminate a session's query (`KILL QUERY`) or the whole session (`KILL`),
+  with confirmation and a guard against killing the tool's own session.
+- Open a session's query in the SQL Workspace (`W`) with a metadata comment
+  header (including a human-readable duration) for examination and EXPLAIN.
+
 #### Connection Manager
 
 - Connection profiles with environment grouping and backend/vendor detection.

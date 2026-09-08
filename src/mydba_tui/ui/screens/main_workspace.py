@@ -26,6 +26,7 @@ class MainWorkspaceScreen(Screen[None]):
     BINDINGS = [
         Binding("c", "open_profiles", "Connections", key_display="C"),
         Binding("w", "open_workspace", "SQL Workspace", key_display="W"),
+        Binding("a", "open_administration", "Administration", key_display="A"),
         Binding("r", "refresh", "Refresh", key_display="R"),
         Binding("x", "reconnect", "Reconnect", key_display="X"),
         Binding("f6", "switch_focus", "Switch Panel", key_display="F6"),
@@ -1119,6 +1120,10 @@ class MainWorkspaceScreen(Screen[None]):
     def action_open_workspace(self) -> None:
         """Navigate to SQL Workspace."""
         self.app.push_screen("workspace")
+
+    def action_open_administration(self) -> None:
+        """Navigate to the Administration Process List."""
+        self.app.push_screen("administration")
 
     def action_reconnect(self) -> None:
         """Reconnect to the current profile and reload the browser."""

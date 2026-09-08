@@ -21,6 +21,12 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
   reloads on each visit since counters change over time.
 - Connections tab (second, after Process List): live connection counts grouped
   by User and Host (IP), sorted by count, with auto-refresh, pause, and filter.
+- Transactions tab (after Connections): active InnoDB transactions, longest
+  running first, with auto-refresh, pause, filter, kill-connection, open-query-
+  in-workspace, and a detail view including the connection's statement history
+  from performance_schema.
+- Shared LiveTableView base underlying the Process List, Connections, and
+  Transactions views (auto-refresh, pause, filter, cursor preservation).
 - Administration tabs only query the server while visible; background tabs no
   longer auto-refresh the shared connection.
 - Process List: a live view of active MySQL sessions, now the first

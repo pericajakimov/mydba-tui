@@ -14,7 +14,7 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.timer import Timer
 from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
@@ -27,6 +27,13 @@ from mydba_tui.services.processlist import (
     kill_session,
 )
 from mydba_tui.services.status import fetch_status
+from mydba_tui.services.transactions import (
+    TRANSACTION_COLUMNS,
+    StatementHistoryEntry,
+    TransactionRow,
+    fetch_statement_history,
+    fetch_transactions,
+)
 from mydba_tui.services.variables import fetch_variables
 from mydba_tui.ui.screens.workspace import WorkspaceScreen
 from mydba_tui.ui.widgets import ConfirmDialog, StatusBar
@@ -120,69 +127,139 @@ def _build_workspace_snippet(proc: ProcessRow) -> str:
     return "\n".join(lines)
 
 
-class ProcessListView(Vertical):
-    """Process List section — a live, filterable view of active sessions."""
+def _build_transaction_snippet(trx: TransactionRow) -> str:
+    """Build the SQL snippet (metadata comment header + query) for a transaction."""
+    query = (trx.query or "").strip()
+    lines = [
+        "-- SQL from transaction",
+        f"-- Trx ID: {trx.trx_id}",
+        f"-- Connection Id: {trx.conn_id}",
+        f"-- User: {_meta_value(trx.user)}",
+        f"-- Host: {_meta_value(trx.host)}",
+        f"-- DB: {_meta_value(trx.db)}",
+        f"-- State: {_meta_value(trx.state)}",
+        f"-- Started: {_meta_value(trx.started)}",
+        f"-- Age: {_format_time_field(trx.age_seconds)}",
+        f"-- Rows locked: {trx.rows_locked}",
+        "",
+        query,
+    ]
+    return "\n".join(lines)
+
+
+class LiveTableView(Vertical):
+    """Base for a live, auto-refreshing, filterable multi-column table view.
+
+    Provides the shared machinery for the Process List, Connections, and
+    Transactions sections: an auto-refresh timer gated on the active tab, a
+    pausable refresh (``p``) with manual refresh (``r``), a client-side text
+    filter (``/`` with Esc to clear), cursor preservation across refreshes, and
+    an info line with paused/filter flags.
+
+    Subclasses configure the DOM id prefix, column headers, filter placeholder,
+    and noun, and implement the data hooks: ``_fetch``, ``_row_key``,
+    ``_row_cells``, and ``_matches``.
+    """
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh", key_display="R", priority=True),
         Binding("p", "toggle_pause", "Pause/Resume", key_display="P"),
-        Binding("s", "toggle_sleeping", "Hide Sleeping", key_display="S"),
         Binding("slash", "filter", "Filter", key_display="/"),
-        Binding("k", "kill_query", "Kill Query", key_display="k"),
-        Binding("K", "kill_connection", "Kill Conn", key_display="K"),
-        Binding("w", "open_in_workspace", "To Workspace", key_display="W"),
     ]
 
     DEFAULT_CSS = """
-    ProcessListView {
+    LiveTableView {
         height: 1fr;
     }
 
-    ProcessListView #admin-info {
+    LiveTableView .live-info {
         height: 1;
         color: $text-muted;
         padding: 0 1;
     }
 
-    ProcessListView #process-table {
+    LiveTableView .live-table {
         height: 1fr;
     }
 
-    ProcessListView #admin-filter {
+    LiveTableView .live-filter {
         display: none;
         dock: bottom;
         border: tall $accent;
     }
 
-    ProcessListView #admin-filter.visible {
+    LiveTableView .live-filter.visible {
         display: block;
     }
     """
 
+    # --- Subclass configuration (override) ---
+    id_prefix: str = "live"
+    columns: tuple[str, ...] = ()
+    filter_placeholder: str = "Filter — Enter to keep, Esc to clear"
+    noun: str = "rows"
+
+    # --- Data hooks (subclasses implement) ---
+    def _fetch(self) -> list[object]:
+        """Return the current list of row items. Subclasses override."""
+        raise NotImplementedError
+
+    def _row_key(self, item: object) -> str:
+        """Return a stable string key for an item (for cursor preservation)."""
+        raise NotImplementedError
+
+    def _row_cells(self, item: object) -> list[Text]:
+        """Return the styled cells for an item, in column order."""
+        raise NotImplementedError
+
+    def _matches(self, item: object, needle: str) -> bool:
+        """Return True if the item matches the (lowercased) filter needle."""
+        raise NotImplementedError
+
+    def _extra_flags(self) -> list[str]:
+        """Optional extra info-line flags (e.g. a hide-sleeping toggle)."""
+        return []
+
+    def _pre_filter(self, items: list[object]) -> list[object]:
+        """Optional non-text filtering applied before the text filter."""
+        return items
+
     def __init__(self) -> None:
-        """Initialize process list state."""
+        """Initialize live view state."""
         super().__init__()
-        self._processes: list[ProcessRow] = []
+        self._items: list[object] = []
         self._paused: bool = False
-        self._hide_sleeping: bool = False
         self._filter: str = ""
         self._refresh_timer: Timer | None = None
 
+    # --- DOM helpers ---
+
+    @property
+    def _info_id(self) -> str:
+        return f"{self.id_prefix}-info"
+
+    @property
+    def _table_id(self) -> str:
+        return f"{self.id_prefix}-table"
+
+    @property
+    def _filter_id(self) -> str:
+        return f"{self.id_prefix}-filter"
+
     def compose(self) -> ComposeResult:
-        """Build the process list layout."""
-        yield Static("", id="admin-info")
-        table: DataTable[Text] = DataTable(id="process-table", zebra_stripes=True)
+        """Build the live table layout."""
+        yield Static("", id=self._info_id, classes="live-info")
+        table: DataTable[Text] = DataTable(
+            id=self._table_id, classes="live-table", zebra_stripes=True
+        )
         table.cursor_type = "row"
         yield table
-        yield Input(
-            placeholder="Filter (user, host, db, state, query) — Enter to keep, Esc to clear",
-            id="admin-filter",
-        )
+        yield Input(placeholder=self.filter_placeholder, id=self._filter_id, classes="live-filter")
 
     def on_mount(self) -> None:
         """Set up the table columns and start auto-refresh."""
-        table = self.query_one("#process-table", DataTable)
-        for col in PROCESS_COLUMNS:
+        table = self.query_one(f"#{self._table_id}", DataTable)
+        for col in self.columns:
             table.add_column(col, key=col)
 
         self.action_refresh()
@@ -208,55 +285,44 @@ class ProcessListView(Vertical):
         self.action_refresh()
 
     def action_refresh(self) -> None:
-        """Reload the process list.
+        """Reload data (synchronous, single-threaded connection).
 
-        Runs synchronously on the UI thread. The shared MySQL connection is
-        used single-threaded throughout the app (the object browser queries it
-        the same way), and mysql-connector connections are not thread-safe, so
-        the process list must not query it from a worker thread. The process
-        list is small, so this stays responsive.
+        The shared MySQL connection is used single-threaded throughout the app
+        (the object browser queries it the same way), and mysql-connector
+        connections are not thread-safe, so these queries run on the UI thread.
         """
         from mydba_tui.connection import ConnectionResult
 
         conn_result = getattr(self.app, "db_connection", None)
         if conn_result is None or not isinstance(conn_result, ConnectionResult):
-            self._show_not_connected()
+            self._show_message("[yellow]Not connected to a database.[/yellow]")
             return
 
-        server_info = getattr(self.app, "server_info", None)
         try:
-            processes = fetch_processes(conn_result.connection, server_info)
+            items = self._fetch()
         except Exception as e:
-            self._show_error(str(e))
+            self._show_message(f"[red]Error: {e}[/red]")
             return
 
-        self._render_processes(processes)
+        self._render_table(items)
 
-    def _show_not_connected(self) -> None:
-        """Show a not-connected message."""
-        self.query_one("#admin-info", Static).update(
-            "[yellow]Not connected to a database.[/yellow]"
-        )
+    def _show_message(self, markup: str) -> None:
+        """Show a message in the info line."""
+        self.query_one(f"#{self._info_id}", Static).update(markup)
 
-    def _show_error(self, message: str) -> None:
-        """Show an error message."""
-        self.query_one("#admin-info", Static).update(f"[red]Error: {message}[/red]")
-
-    def _render_processes(self, processes: list[ProcessRow]) -> None:
-        """Populate the DataTable, preserving cursor position by process id."""
-        self._processes = processes
-
-        table = self.query_one("#process-table", DataTable)
-
-        # Remember the currently selected process id to restore after reload.
-        selected_id = self._selected_process_id()
+    def _render_table(self, items: list[object]) -> None:
+        """Populate the table, preserving cursor position by row key."""
+        self._items = items
+        table = self.query_one(f"#{self._table_id}", DataTable)
+        selected_key = self._selected_key()
 
         table.clear()
-        visible = self._visible_processes()
+        visible = self._visible_items()
         restore_row = 0
-        for row_idx, proc in enumerate(visible):
-            table.add_row(*self._row_cells(proc), key=str(proc.id))
-            if proc.id == selected_id:
+        for row_idx, item in enumerate(visible):
+            key = self._row_key(item)
+            table.add_row(*self._row_cells(item), key=key)
+            if key == selected_key:
                 restore_row = row_idx
 
         if visible:
@@ -265,22 +331,144 @@ class ProcessListView(Vertical):
             except Exception:
                 pass
 
-        self._update_info(len(visible), len(processes))
+        self._update_info(len(visible), len(items))
 
-    def _row_cells(self, proc: ProcessRow) -> list[Text]:
+    def _visible_items(self) -> list[object]:
+        """Apply subclass pre-filter and the text filter."""
+        result = self._pre_filter(self._items)
+        if self._filter:
+            needle = self._filter.lower()
+            result = [it for it in result if self._matches(it, needle)]
+        return result
+
+    def _update_info(self, shown: int, total: int) -> None:
+        """Update the info line above the table."""
+        flags = []
+        if self._paused:
+            flags.append("[yellow]PAUSED[/yellow]")
+        flags.extend(self._extra_flags())
+        if self._filter:
+            flags.append(f"filter: '{self._filter}'")
+        suffix = f"  ({', '.join(flags)})" if flags else ""
+        self._show_message(f"[bold]{shown}[/bold] of {total} {self.noun}{suffix}")
+
+    # --- Selection ---
+
+    def _selected_key(self) -> str | None:
+        """Return the row key of the selected row, if any."""
+        table = self.query_one(f"#{self._table_id}", DataTable)
+        if table.row_count == 0:
+            return None
+        try:
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+        except Exception:
+            return None
+        return None if row_key.value is None else str(row_key.value)
+
+    def _selected_item(self) -> object | None:
+        """Return the item for the selected row, if any."""
+        key = self._selected_key()
+        if key is None:
+            return None
+        return next((it for it in self._items if self._row_key(it) == key), None)
+
+    # --- View controls ---
+
+    def action_toggle_pause(self) -> None:
+        """Toggle auto-refresh."""
+        self._paused = not self._paused
+        self._render_table(self._items)
+        self.notify("Auto-refresh paused." if self._paused else "Auto-refresh resumed.")
+
+    def action_filter(self) -> None:
+        """Reveal the filter input and focus it."""
+        flt = self.query_one(f"#{self._filter_id}", Input)
+        flt.add_class("visible")
+        flt.value = self._filter
+        flt.focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Apply the filter live as the user types."""
+        if event.input.id == self._filter_id:
+            self._filter = event.value.strip()
+            self._render_table(self._items)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Dismiss the filter input on Enter, keeping the filter applied."""
+        if event.input.id == self._filter_id:
+            self._close_filter(clear=False)
+
+    def on_key(self, event: events.Key) -> None:
+        """Escape while the filter is focused clears it and returns to the table."""
+        if event.key != "escape":
+            return
+        flt = self.query_one(f"#{self._filter_id}", Input)
+        if flt.has_focus:
+            event.stop()
+            self._close_filter(clear=True)
+
+    def _close_filter(self, *, clear: bool) -> None:
+        """Hide the filter input and return focus to the table."""
+        flt = self.query_one(f"#{self._filter_id}", Input)
+        if clear:
+            flt.value = ""
+            self._filter = ""
+            self._render_table(self._items)
+        flt.remove_class("visible")
+        self.query_one(f"#{self._table_id}", DataTable).focus()
+
+    # --- Detail (Enter) ---
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Open the detail view for the selected row (subclasses override _show_detail)."""
+        if event.data_table.id == self._table_id:
+            self.action_show_detail()
+
+    def action_show_detail(self) -> None:
+        """Show details for the selected row. Subclasses override."""
+
+
+class ProcessListView(LiveTableView):
+    """Process List section — a live, filterable view of active sessions."""
+
+    BINDINGS = [
+        Binding("s", "toggle_sleeping", "Hide Sleeping", key_display="S"),
+        Binding("k", "kill_query", "Kill Query", key_display="k"),
+        Binding("K", "kill_connection", "Kill Conn", key_display="K"),
+        Binding("w", "open_in_workspace", "To Workspace", key_display="W"),
+    ]
+
+    id_prefix = "process"
+    columns = tuple(PROCESS_COLUMNS)
+    filter_placeholder = "Filter (user, host, db, state, query) — Enter to keep, Esc to clear"
+    noun = "sessions"
+
+    def __init__(self) -> None:
+        """Initialize process list state."""
+        super().__init__()
+        self._hide_sleeping: bool = False
+
+    # --- Data hooks ---
+
+    def _fetch(self) -> list[object]:
+        conn_result = self.app.db_connection  # type: ignore[attr-defined]
+        server_info = getattr(self.app, "server_info", None)
+        return list(fetch_processes(conn_result.connection, server_info))
+
+    def _row_key(self, item: object) -> str:
+        return str(item.id)  # type: ignore[attr-defined]
+
+    def _row_cells(self, item: object) -> list[Text]:
         """Build styled cells for a process row."""
         from mydba_tui.renderers.table import styled_cell
 
+        proc: ProcessRow = item  # type: ignore[assignment]
         info = proc.info or ""
         if len(info) > _INFO_TRUNCATE:
             info = info[:_INFO_TRUNCATE] + "…"
-
-        # Truncate long State values for display only; the full text stays in
-        # the ProcessRow for the detail modal, filter, and workspace snippet.
         state = proc.state or ""
         if len(state) > _STATE_TRUNCATE:
             state = state[:_STATE_TRUNCATE] + "…"
-
         cmd_style = "dim" if proc.command == "Sleep" else ""
         return [
             styled_cell(proc.id),
@@ -294,19 +482,8 @@ class ProcessListView(Vertical):
             Text(info),
         ]
 
-    def _visible_processes(self) -> list[ProcessRow]:
-        """Apply the sleeping toggle and text filter to the process list."""
-        result = self._processes
-        if self._hide_sleeping:
-            result = [p for p in result if p.command != "Sleep"]
-        if self._filter:
-            needle = self._filter.lower()
-            result = [p for p in result if self._matches(p, needle)]
-        return result
-
-    @staticmethod
-    def _matches(proc: ProcessRow, needle: str) -> bool:
-        """Return True if any displayed field contains the filter needle."""
+    def _matches(self, item: object, needle: str) -> bool:
+        proc: ProcessRow = item  # type: ignore[assignment]
         haystack = " ".join(
             str(v)
             for v in (
@@ -322,104 +499,24 @@ class ProcessListView(Vertical):
         ).lower()
         return needle.lower() in haystack
 
-    def _update_info(self, shown: int, total: int) -> None:
-        """Update the info line above the table."""
-        flags = []
-        if self._paused:
-            flags.append("[yellow]PAUSED[/yellow]")
+    def _pre_filter(self, items: list[object]) -> list[object]:
         if self._hide_sleeping:
-            flags.append("hiding sleeping")
-        if self._filter:
-            flags.append(f"filter: '{self._filter}'")
-        suffix = f"  ({', '.join(flags)})" if flags else ""
-        self.query_one("#admin-info", Static).update(
-            f"[bold]{shown}[/bold] of {total} sessions{suffix}"
-        )
+            return [it for it in items if it.command != "Sleep"]  # type: ignore[attr-defined]
+        return items
 
-    # --- Selection ---
-
-    def _selected_process_id(self) -> int | None:
-        """Return the process id of the currently selected row, if any."""
-        table = self.query_one("#process-table", DataTable)
-        if table.row_count == 0:
-            return None
-        try:
-            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
-        except Exception:
-            return None
-        if row_key.value is None:
-            return None
-        try:
-            return int(row_key.value)
-        except (ValueError, TypeError):
-            return None
+    def _extra_flags(self) -> list[str]:
+        return ["hiding sleeping"] if self._hide_sleeping else []
 
     def _selected_process(self) -> ProcessRow | None:
-        """Return the ProcessRow of the currently selected row, if any."""
-        pid = self._selected_process_id()
-        if pid is None:
-            return None
-        return next((p for p in self._processes if p.id == pid), None)
+        item = self._selected_item()
+        return item  # type: ignore[return-value]
 
-    # --- Actions: view controls ---
-
-    def action_toggle_pause(self) -> None:
-        """Toggle auto-refresh."""
-        self._paused = not self._paused
-        self._update_info(len(self._visible_processes()), len(self._processes))
-        self.notify("Auto-refresh paused." if self._paused else "Auto-refresh resumed.")
+    # --- Actions ---
 
     def action_toggle_sleeping(self) -> None:
         """Toggle hiding of sleeping connections."""
         self._hide_sleeping = not self._hide_sleeping
-        self._render_processes(self._processes)
-
-    def action_filter(self) -> None:
-        """Reveal the filter input and focus it."""
-        flt = self.query_one("#admin-filter", Input)
-        flt.add_class("visible")
-        flt.value = self._filter
-        flt.focus()
-
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """Apply the filter live as the user types."""
-        if event.input.id == "admin-filter":
-            self._filter = event.value.strip()
-            self._render_processes(self._processes)
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Hide the filter input and return focus to the table on Enter.
-
-        The current filter text stays applied; Enter simply dismisses the input.
-        """
-        if event.input.id == "admin-filter":
-            self._close_filter(clear=False)
-
-    def on_key(self, event: events.Key) -> None:
-        """Handle Escape while the filter input is focused.
-
-        Escape clears the filter and returns to the table. Without this, the
-        screen-level Escape binding is swallowed while the Input has focus,
-        leaving no way out of the filter.
-        """
-        if event.key != "escape":
-            return
-        flt = self.query_one("#admin-filter", Input)
-        if flt.has_focus:
-            event.stop()
-            self._close_filter(clear=True)
-
-    def _close_filter(self, *, clear: bool) -> None:
-        """Hide the filter input and return focus to the table."""
-        flt = self.query_one("#admin-filter", Input)
-        if clear:
-            flt.value = ""
-            self._filter = ""
-            self._render_processes(self._processes)
-        flt.remove_class("visible")
-        self.query_one("#process-table", DataTable).focus()
-
-    # --- Actions: kill ---
+        self._render_table(self._items)
 
     def action_kill_query(self) -> None:
         """Kill the running query of the selected session (keeps connection)."""
@@ -455,15 +552,12 @@ class ProcessListView(Vertical):
         self.app.push_screen(ConfirmDialog(message), callback=on_confirm)
 
     def _run_kill(self, process_id: int, *, query_only: bool) -> None:
-        """Execute the KILL on the UI thread, then refresh.
-
-        Uses the shared connection single-threaded (see action_refresh).
-        """
+        """Execute the KILL on the UI thread, then refresh."""
         from mydba_tui.connection import ConnectionResult
 
         conn_result = getattr(self.app, "db_connection", None)
         if conn_result is None or not isinstance(conn_result, ConnectionResult):
-            self._show_not_connected()
+            self._show_message("[yellow]Not connected to a database.[/yellow]")
             return
 
         try:
@@ -476,8 +570,6 @@ class ProcessListView(Vertical):
         self.notify(f"Killed {what} for session {process_id}.")
         self.action_refresh()
 
-    # --- Actions: detail ---
-
     def action_show_detail(self) -> None:
         """Show the full details (all fields + query) of the selected session."""
         proc = self._selected_process()
@@ -486,18 +578,8 @@ class ProcessListView(Vertical):
             return
         self.app.push_screen(_SessionDetailScreen(proc))
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Open the detail modal when a row is activated (Enter on the table)."""
-        if event.data_table.id == "process-table":
-            self.action_show_detail()
-
     def action_open_in_workspace(self) -> None:
-        """Open the selected session's query in the SQL Workspace.
-
-        The query is prefixed with a comment block describing the session
-        (connection id, user, host, db, command, time, state) so it can be
-        examined and EXPLAINed with full context.
-        """
+        """Open the selected session's query in the SQL Workspace."""
         proc = self._selected_process()
         if proc is None:
             self.notify("No session selected.", severity="warning")
@@ -516,136 +598,42 @@ class ProcessListView(Vertical):
         self.app.push_screen("workspace")
 
 
-class ConnectionsView(Vertical):
+class ConnectionsView(LiveTableView):
     """Connections section — live connection counts grouped by (user, host)."""
 
-    BINDINGS = [
-        Binding("r", "refresh", "Refresh", key_display="R", priority=True),
-        Binding("p", "toggle_pause", "Pause/Resume", key_display="P"),
-        Binding("slash", "filter", "Filter", key_display="/"),
-    ]
+    id_prefix = "conn"
+    columns = ("User", "Host", "Connections")
+    filter_placeholder = "Filter (user or host) — Enter to keep, Esc to clear"
+    noun = "groups"
 
-    DEFAULT_CSS = """
-    ConnectionsView {
-        height: 1fr;
-    }
-
-    ConnectionsView #conn-info {
-        height: 1;
-        color: $text-muted;
-        padding: 0 1;
-    }
-
-    ConnectionsView #conn-table {
-        height: 1fr;
-    }
-
-    ConnectionsView #conn-filter {
-        display: none;
-        dock: bottom;
-        border: tall $accent;
-    }
-
-    ConnectionsView #conn-filter.visible {
-        display: block;
-    }
-    """
-
-    def __init__(self) -> None:
-        """Initialize connections state."""
-        super().__init__()
-        self._stats: list[ConnectionStat] = []
-        self._paused: bool = False
-        self._filter: str = ""
-        self._refresh_timer: Timer | None = None
-
-    def compose(self) -> ComposeResult:
-        """Build the connections layout."""
-        yield Static("", id="conn-info")
-        table: DataTable[Text] = DataTable(id="conn-table", zebra_stripes=True)
-        table.cursor_type = "row"
-        yield table
-        yield Input(
-            placeholder="Filter (user or host) — Enter to keep, Esc to clear",
-            id="conn-filter",
-        )
-
-    def on_mount(self) -> None:
-        """Set up columns and start auto-refresh."""
-        table = self.query_one("#conn-table", DataTable)
-        table.add_column("User", key="user")
-        table.add_column("Host", key="host")
-        table.add_column("Connections", key="count")
-
-        self.action_refresh()
-
-        interval = getattr(getattr(self.app, "settings", None), "refresh_interval", 3)
-        interval = max(1, int(interval))
-        self._refresh_timer = self.set_interval(interval, self._on_refresh_tick)
-
-    def refresh_data(self) -> None:
-        """Public hook to reload data (called when the tab is shown)."""
-        self.action_refresh()
-
-    # --- Data loading ---
-
-    def _on_refresh_tick(self) -> None:
-        """Timer callback — refresh unless paused and only when this tab is active.
-
-        Skips the DB query while the tab is in the background.
-        """
-        if self._paused or not _view_is_active_tab(self):
-            return
-        self.action_refresh()
-
-    def action_refresh(self) -> None:
-        """Reload connection stats (synchronous, single-threaded connection)."""
-        from mydba_tui.connection import ConnectionResult
-
-        info = self.query_one("#conn-info", Static)
-        conn_result = getattr(self.app, "db_connection", None)
-        if conn_result is None or not isinstance(conn_result, ConnectionResult):
-            info.update("[yellow]Not connected to a database.[/yellow]")
-            return
-
+    def _fetch(self) -> list[object]:
+        conn_result = self.app.db_connection  # type: ignore[attr-defined]
         server_info = getattr(self.app, "server_info", None)
-        try:
-            stats = fetch_connection_stats(conn_result.connection, server_info)
-        except Exception as e:
-            info.update(f"[red]Error: {e}[/red]")
-            return
+        return list(fetch_connection_stats(conn_result.connection, server_info))
 
-        self._stats = stats
-        self._render_table()
+    def _row_key(self, item: object) -> str:
+        stat: ConnectionStat = item  # type: ignore[assignment]
+        return f"{stat.user}\x00{stat.host}"
 
-    def _render_table(self) -> None:
-        """Populate the table, preserving cursor position by (user, host)."""
+    def _row_cells(self, item: object) -> list[Text]:
         from mydba_tui.renderers.table import styled_cell
 
-        table = self.query_one("#conn-table", DataTable)
-        selected_key = self._selected_key()
+        stat: ConnectionStat = item  # type: ignore[assignment]
+        return [
+            styled_cell(stat.user),
+            styled_cell(stat.host),
+            styled_cell(stat.count),
+        ]
 
-        table.clear()
-        visible = self._visible_stats()
-        restore_row = 0
-        for row_idx, stat in enumerate(visible):
-            row_key = f"{stat.user}\x00{stat.host}"
-            table.add_row(
-                styled_cell(stat.user),
-                styled_cell(stat.host),
-                styled_cell(stat.count),
-                key=row_key,
-            )
-            if row_key == selected_key:
-                restore_row = row_idx
+    def _matches(self, item: object, needle: str) -> bool:
+        stat: ConnectionStat = item  # type: ignore[assignment]
+        return needle in stat.user.lower() or needle in stat.host.lower()
 
-        if visible:
-            try:
-                table.move_cursor(row=restore_row)
-            except Exception:
-                pass
-
-        total_conns = sum(s.count for s in self._stats)
+    def _update_info(self, shown: int, total: int) -> None:
+        """Info line shows group counts plus total connections."""
+        visible: list[ConnectionStat] = self._visible_items()  # type: ignore[assignment]
+        all_stats: list[ConnectionStat] = self._items  # type: ignore[assignment]
+        total_conns = sum(s.count for s in all_stats)
         shown_conns = sum(s.count for s in visible)
         flags = []
         if self._paused:
@@ -653,73 +641,144 @@ class ConnectionsView(Vertical):
         if self._filter:
             flags.append(f"filter: '{self._filter}'")
         suffix = f"  ({', '.join(flags)})" if flags else ""
-        self.query_one("#conn-info", Static).update(
-            f"[bold]{len(visible)}[/bold] of {len(self._stats)} groups, "
+        self._show_message(
+            f"[bold]{shown}[/bold] of {total} groups, "
             f"{shown_conns} of {total_conns} connections{suffix}"
         )
 
-    def _visible_stats(self) -> list[ConnectionStat]:
-        """Apply the text filter across user and host."""
-        if not self._filter:
-            return self._stats
-        needle = self._filter.lower()
-        return [s for s in self._stats if needle in s.user.lower() or needle in s.host.lower()]
 
-    def _selected_key(self) -> str | None:
-        """Return the row key (user\\x00host) of the selected row, if any."""
-        table = self.query_one("#conn-table", DataTable)
-        if table.row_count == 0:
-            return None
-        try:
-            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
-        except Exception:
-            return None
-        return None if row_key.value is None else str(row_key.value)
+class TransactionsView(LiveTableView):
+    """Transactions section — active InnoDB transactions, longest-running first."""
 
-    # --- View controls ---
+    BINDINGS = [
+        Binding("k", "kill_connection", "Kill Conn", key_display="K"),
+        Binding("w", "open_in_workspace", "To Workspace", key_display="W"),
+    ]
 
-    def action_toggle_pause(self) -> None:
-        """Toggle auto-refresh."""
-        self._paused = not self._paused
-        self._render_table()
-        self.notify("Auto-refresh paused." if self._paused else "Auto-refresh resumed.")
+    id_prefix = "trx"
+    columns = tuple(TRANSACTION_COLUMNS)
+    filter_placeholder = "Filter (user, host, db, state, query) — Enter to keep, Esc to clear"
+    noun = "transactions"
 
-    def action_filter(self) -> None:
-        """Reveal the filter input and focus it."""
-        flt = self.query_one("#conn-filter", Input)
-        flt.add_class("visible")
-        flt.value = self._filter
-        flt.focus()
+    _QUERY_TRUNCATE = 80
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """Apply the filter live as the user types."""
-        if event.input.id == "conn-filter":
-            self._filter = event.value.strip()
-            self._render_table()
+    def _fetch(self) -> list[object]:
+        conn_result = self.app.db_connection  # type: ignore[attr-defined]
+        return list(fetch_transactions(conn_result.connection))
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Dismiss the filter input on Enter, keeping the filter applied."""
-        if event.input.id == "conn-filter":
-            self._close_filter(clear=False)
+    def _row_key(self, item: object) -> str:
+        return str(item.trx_id)  # type: ignore[attr-defined]
 
-    def on_key(self, event: events.Key) -> None:
-        """Escape while the filter is focused clears it and returns to table."""
-        if event.key != "escape":
+    def _row_cells(self, item: object) -> list[Text]:
+        from mydba_tui.renderers.table import styled_cell
+
+        trx: TransactionRow = item  # type: ignore[assignment]
+        query = trx.query or ""
+        if len(query) > self._QUERY_TRUNCATE:
+            query = query[: self._QUERY_TRUNCATE] + "…"
+        return [
+            styled_cell(trx.trx_id),
+            styled_cell(trx.conn_id),
+            styled_cell(trx.user),
+            styled_cell(trx.host),
+            styled_cell(trx.db),
+            styled_cell(trx.state),
+            styled_cell(_format_seconds(trx.age_seconds)),
+            styled_cell(trx.rows_locked),
+            Text(query),
+        ]
+
+    def _matches(self, item: object, needle: str) -> bool:
+        trx: TransactionRow = item  # type: ignore[assignment]
+        haystack = " ".join(
+            str(v)
+            for v in (
+                trx.trx_id,
+                trx.conn_id,
+                trx.user,
+                trx.host,
+                trx.db,
+                trx.state,
+                trx.query,
+            )
+        ).lower()
+        return needle in haystack
+
+    def _selected_transaction(self) -> TransactionRow | None:
+        item = self._selected_item()
+        return item  # type: ignore[return-value]
+
+    # --- Actions ---
+
+    def action_show_detail(self) -> None:
+        """Show the full details of the selected transaction."""
+        trx = self._selected_transaction()
+        if trx is None:
+            self.notify("No transaction selected.", severity="warning")
             return
-        flt = self.query_one("#conn-filter", Input)
-        if flt.has_focus:
-            event.stop()
-            self._close_filter(clear=True)
+        self.app.push_screen(_TransactionDetailScreen(trx))
 
-    def _close_filter(self, *, clear: bool) -> None:
-        """Hide the filter input and return focus to the table."""
-        flt = self.query_one("#conn-filter", Input)
-        if clear:
-            flt.value = ""
-            self._filter = ""
-            self._render_table()
-        flt.remove_class("visible")
-        self.query_one("#conn-table", DataTable).focus()
+    def action_open_in_workspace(self) -> None:
+        """Open the selected transaction's query in the SQL Workspace."""
+        trx = self._selected_transaction()
+        if trx is None:
+            self.notify("No transaction selected.", severity="warning")
+            return
+        if not (trx.query or "").strip():
+            self.notify("No query for this transaction.", severity="information")
+            return
+
+        text = _build_transaction_snippet(trx)
+        try:
+            workspace = self.app.get_screen("workspace", WorkspaceScreen)
+        except Exception:
+            self.notify("SQL Workspace unavailable.", severity="error")
+            return
+        workspace.load_query(text)
+        self.app.push_screen("workspace")
+
+    def action_kill_connection(self) -> None:
+        """Kill the connection running the selected transaction (with confirm)."""
+        trx = self._selected_transaction()
+        if trx is None:
+            self.notify("No transaction selected.", severity="warning")
+            return
+        if trx.conn_id == 0:
+            self.notify("No connection id for this transaction.", severity="warning")
+            return
+
+        own_id = getattr(getattr(self.app, "server_info", None), "connection_id", 0)
+        if own_id and trx.conn_id == own_id:
+            self.notify("Refusing to kill your own session.", severity="warning")
+            return
+
+        message = (
+            f"Kill connection {trx.conn_id} (user {trx.user}) holding transaction {trx.trx_id}?"
+        )
+
+        def on_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                self._run_kill(trx.conn_id)
+
+        self.app.push_screen(ConfirmDialog(message), callback=on_confirm)
+
+    def _run_kill(self, conn_id: int) -> None:
+        """Kill the connection on the UI thread, then refresh."""
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            self._show_message("[yellow]Not connected to a database.[/yellow]")
+            return
+
+        try:
+            kill_session(conn_result.connection, conn_id, query_only=False)
+        except Exception as e:
+            self.notify(f"Kill failed: {e}", severity="error")
+            return
+
+        self.notify(f"Killed connection {conn_id}.")
+        self.action_refresh()
 
 
 class KeyValueView(Vertical):
@@ -1042,6 +1101,122 @@ class _SessionDetailScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+class _TransactionDetailScreen(ModalScreen[None]):
+    """Modal showing the full details of a transaction plus its query."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", key_display="Esc"),
+    ]
+
+    CSS = """
+    _TransactionDetailScreen {
+        align: center middle;
+        background: $background 80%;
+    }
+
+    #detail-container {
+        width: 80%;
+        max-width: 120;
+        height: auto;
+        max-height: 80%;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+
+    #detail-title {
+        text-style: bold;
+        padding-bottom: 1;
+    }
+
+    #detail-meta {
+        height: auto;
+        padding-bottom: 1;
+    }
+
+    .detail-section {
+        text-style: bold;
+        color: $accent;
+        padding-top: 1;
+    }
+
+    .detail-sql {
+        height: auto;
+        padding: 0 0 1 1;
+    }
+
+    .detail-hist-label {
+        color: $text-muted;
+        padding-top: 1;
+    }
+    """
+
+    def __init__(self, trx: TransactionRow) -> None:
+        """Initialize with the transaction whose details are shown."""
+        super().__init__()
+        self._trx = trx
+
+    def compose(self) -> ComposeResult:
+        """Build the detail modal."""
+        from mydba_tui.ui.mysql_highlight import highlight_mysql
+
+        trx = self._trx
+        meta_lines = [
+            f"[bold]Trx ID:[/bold] {trx.trx_id}",
+            f"[bold]Connection Id:[/bold] {trx.conn_id}",
+            f"[bold]User:[/bold] {_meta_value(trx.user)}",
+            f"[bold]Host:[/bold] {_meta_value(trx.host)}",
+            f"[bold]DB:[/bold] {_meta_value(trx.db)}",
+            f"[bold]State:[/bold] {_meta_value(trx.state)}",
+            f"[bold]Started:[/bold] {_meta_value(trx.started)}",
+            f"[bold]Age:[/bold] {_format_time_field(trx.age_seconds)}",
+            f"[bold]Rows locked:[/bold] {trx.rows_locked} [dim](InnoDB estimate)[/dim]",
+        ]
+        with VerticalScroll(id="detail-container"):
+            yield Static(f"Transaction {trx.trx_id}", id="detail-title")
+            yield Static("\n".join(meta_lines), id="detail-meta")
+
+            query = (trx.query or "").strip()
+            yield Static("[bold]Current statement[/bold]", classes="detail-section")
+            if query:
+                yield Static(highlight_mysql(query), classes="detail-sql")
+            else:
+                yield Static("[dim]None (idle in transaction).[/dim]", classes="detail-sql")
+
+            yield Static("[bold]Statement history[/bold]", classes="detail-section")
+            history = self._load_history()
+            if history is None:
+                yield Static(
+                    "[dim]Unavailable — requires performance_schema statement history.[/dim]",
+                    classes="detail-sql",
+                )
+            elif not history:
+                yield Static("[dim]No recent statements.[/dim]", classes="detail-sql")
+            else:
+                for i, entry in enumerate(history, 1):
+                    ms = f"{entry.duration_ms:.1f} ms" if entry.duration_ms else ""
+                    label = f"[dim]{i}.[/dim] [dim]{ms}[/dim]" if ms else f"[dim]{i}.[/dim]"
+                    yield Static(label, classes="detail-hist-label")
+                    yield Static(highlight_mysql(entry.sql), classes="detail-sql")
+
+    def _load_history(self) -> list[StatementHistoryEntry] | None:
+        """Load statement history for the transaction's connection.
+
+        Returns None if not connected (so the modal can show an 'unavailable'
+        note), otherwise the (possibly empty) list of recent statements.
+        """
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return None
+        return fetch_statement_history(conn_result.connection, self._trx.conn_id)
+
+    def action_close(self) -> None:
+        """Dismiss the modal."""
+        self.dismiss(None)
+
+
 class _KeyValueDetailScreen(ModalScreen[None]):
     """Modal showing a single key/value entry's full name and value."""
 
@@ -1119,6 +1294,8 @@ class AdministrationScreen(Screen[None]):
                 yield ProcessListView()
             with TabPane("Connections", id="tab-connections"):
                 yield ConnectionsView()
+            with TabPane("Transactions", id="tab-transactions"):
+                yield TransactionsView()
             with TabPane("Variables", id="tab-variables"):
                 yield VariablesView()
             with TabPane("Status", id="tab-status"):
@@ -1140,10 +1317,8 @@ class AdministrationScreen(Screen[None]):
             return
         for view in pane.walk_children(KeyValueView):
             view.refresh_data()
-        for pl in pane.walk_children(ProcessListView):
-            pl.refresh_data()
-        for cv in pane.walk_children(ConnectionsView):
-            cv.refresh_data()
+        for live in pane.walk_children(LiveTableView):
+            live.refresh_data()
         # Focus is intentionally left on the tab bar so arrow keys switch tabs;
         # the user presses Tab to move focus into the active tab's content
         # (matching the Object Browser).

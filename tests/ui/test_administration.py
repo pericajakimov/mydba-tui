@@ -6,6 +6,7 @@ from mydba_tui.ui.screens.administration import (
     ConnectionsView,
     ProcessListView,
     StatusView,
+    TransactionsView,
     VariablesView,
 )
 
@@ -33,54 +34,64 @@ def test_screen_has_navigation_bindings() -> None:
     assert "f10" in keys
 
 
+def _all_binding_keys(view_cls: type) -> set[str]:
+    """Collect binding keys from a view class and its LiveTableView base."""
+    from mydba_tui.ui.screens.administration import LiveTableView
+
+    keys: set[str] = set()
+    for cls in (view_cls, LiveTableView):
+        keys.update(b.key for b in cls.BINDINGS)
+    return keys
+
+
 def test_process_list_view_bindings_present() -> None:
     """The Process List view exposes refresh, pause, filter, and kill keys."""
-    keys = [b.key for b in ProcessListView.BINDINGS]
+    keys = _all_binding_keys(ProcessListView)
     for key in ("r", "p", "s", "slash", "k", "K", "w"):
         assert key in keys, f"missing binding {key}"
 
 
 def test_matches_by_user() -> None:
     """Filter matches on the user field, case-insensitively."""
-    proc = _proc(user="reporting")
-    assert ProcessListView._matches(proc, "report") is True
-    assert ProcessListView._matches(proc, "REPORT") is True
+    view = ProcessListView()
+    assert view._matches(_proc(user="reporting"), "report") is True
+    assert view._matches(_proc(user="reporting"), "REPORT") is True
 
 
 def test_matches_by_query_text() -> None:
     """Filter matches within the query (Info) text."""
-    proc = _proc(info="UPDATE inventory SET qty = 0")
-    assert ProcessListView._matches(proc, "inventory") is True
+    view = ProcessListView()
+    assert view._matches(_proc(info="UPDATE inventory SET qty = 0"), "inventory") is True
 
 
 def test_matches_no_hit() -> None:
     """Filter returns False when nothing contains the needle."""
-    proc = _proc(user="app", info="SELECT 1")
-    assert ProcessListView._matches(proc, "zzz") is False
+    view = ProcessListView()
+    assert view._matches(_proc(user="app", info="SELECT 1"), "zzz") is False
 
 
 def test_hide_sleeping_filter() -> None:
-    """_visible_processes hides Sleep sessions when the toggle is on."""
+    """_visible_items hides Sleep sessions when the toggle is on."""
     view = ProcessListView()
-    view._processes = [
+    view._items = [
         _proc(id=1, command="Query"),
         _proc(id=2, command="Sleep"),
         _proc(id=3, command="Query"),
     ]
     view._hide_sleeping = True
-    visible = view._visible_processes()
+    visible = view._visible_items()
     assert {p.id for p in visible} == {1, 3}
 
 
 def test_text_filter_applied() -> None:
-    """_visible_processes applies the text filter across fields."""
+    """_visible_items applies the text filter across fields."""
     view = ProcessListView()
-    view._processes = [
+    view._items = [
         _proc(id=1, user="app"),
         _proc(id=2, user="reporting"),
     ]
     view._filter = "report"
-    visible = view._visible_processes()
+    visible = view._visible_items()
     assert [p.id for p in visible] == [2]
 
 
@@ -215,7 +226,7 @@ def test_view_config_differs() -> None:
 
 def test_connections_view_bindings_present() -> None:
     """The Connections view exposes refresh, pause, and filter keys."""
-    keys = [b.key for b in ConnectionsView.BINDINGS]
+    keys = _all_binding_keys(ConnectionsView)
     for key in ("r", "p", "slash"):
         assert key in keys, f"missing binding {key}"
 
@@ -225,17 +236,74 @@ def test_connections_filter_matches_user_and_host() -> None:
     from mydba_tui.services.connections import ConnectionStat
 
     view = ConnectionsView()
-    view._stats = [
+    view._items = [
         ConnectionStat(user="app", host="10.0.0.1", count=3),
         ConnectionStat(user="reporting", host="10.0.0.9", count=1),
     ]
 
     view._filter = "report"
-    assert [s.user for s in view._visible_stats()] == ["reporting"]
+    assert [s.user for s in view._visible_items()] == ["reporting"]
 
     # Match on host.
     view._filter = "0.0.1"
-    assert [s.user for s in view._visible_stats()] == ["app"]
+    assert [s.user for s in view._visible_items()] == ["app"]
 
     view._filter = ""
-    assert len(view._visible_stats()) == 2
+    assert len(view._visible_items()) == 2
+
+
+def _trx(**overrides: object):
+    from mydba_tui.services.transactions import TransactionRow
+
+    base: dict[str, object] = {
+        "trx_id": "421",
+        "conn_id": 100,
+        "user": "app",
+        "host": "10.0.0.1",
+        "db": "shop",
+        "state": "RUNNING",
+        "started": "2026-01-01 10:00:00",
+        "age_seconds": 30,
+        "rows_locked": 5,
+        "query": "UPDATE orders SET status = 1",
+    }
+    base.update(overrides)
+    return TransactionRow(**base)  # type: ignore[arg-type]
+
+
+def test_transactions_view_bindings_present() -> None:
+    """The Transactions view exposes refresh, pause, filter, kill, workspace."""
+    keys = _all_binding_keys(TransactionsView)
+    for key in ("r", "p", "slash", "k", "w"):
+        assert key in keys, f"missing binding {key}"
+
+
+def test_transactions_filter_matches_fields() -> None:
+    """The Transactions filter matches user, host, state, and query."""
+    view = TransactionsView()
+    view._items = [
+        _trx(trx_id="1", user="app", query="UPDATE orders SET x=1"),
+        _trx(trx_id="2", user="reporting", query="SELECT * FROM sales"),
+    ]
+
+    view._filter = "report"
+    assert [t.trx_id for t in view._visible_items()] == ["2"]  # type: ignore[attr-defined]
+
+    view._filter = "orders"
+    assert [t.trx_id for t in view._visible_items()] == ["1"]  # type: ignore[attr-defined]
+
+    view._filter = ""
+    assert len(view._visible_items()) == 2
+
+
+def test_transaction_snippet_includes_metadata_and_query() -> None:
+    """The transaction workspace snippet has a metadata header plus the query."""
+    from mydba_tui.ui.screens.administration import _build_transaction_snippet
+
+    trx = _trx(trx_id="777", conn_id=222, age_seconds=95, query="DELETE FROM t")
+    snippet = _build_transaction_snippet(trx)
+    assert snippet.startswith("-- SQL from transaction")
+    assert "-- Trx ID: 777" in snippet
+    assert "-- Connection Id: 222" in snippet
+    assert "-- Age: 95 (1m 35s)" in snippet
+    assert snippet.rstrip().endswith("DELETE FROM t")

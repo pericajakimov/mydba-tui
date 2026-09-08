@@ -39,8 +39,9 @@ Implemented:
 In progress / next:
 
 - Administration — tabbed screen with Process List (live, filterable, kill
-  sessions, open query in workspace), Connections (grouped counts), Variables,
-  and Status; Transactions, Locks, Users, Replication next
+  sessions, open query in workspace), Connections (grouped counts), Transactions
+  (active InnoDB transactions with statement history), Variables, and Status;
+  Locks, Users, Replication next
 - Monitoring (server activity, live metrics, lightweight graphs)
 - Polish (performance, rendering, error handling, additional themes)
 
@@ -108,11 +109,11 @@ In progress / next:
 
 - Process List ✅
 - Connections ✅
+- Transactions ✅
 - Variables ✅
 - Status ✅
 - Users
 - Replication
-- Transactions
 - Locks
 - Metadata Locks
 - InnoDB Status

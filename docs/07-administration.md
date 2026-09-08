@@ -215,17 +215,39 @@ The objective is to quickly identify blocking situations without reading raw met
 
 # Transactions
 
-The Transactions section provides visibility into active database transactions.
+The Transactions section provides visibility into active InnoDB transactions.
+It is a live Administration tab (after Connections), sourced from
+`information_schema.innodb_trx` joined to the process list for each
+transaction's user, host, and database.
 
-Typical information includes:
+Columns: Trx ID, Conn ID, User, Host (IP), DB, State, Age (human-readable),
+Rows Locked, and Query. Rows are sorted with the longest-running transactions
+first, so stuck or slow transactions surface at the top.
 
-- Transaction ID
-- Connection ID
-- User
-- Database
-- Start Time
-- Transaction Age
-- Transaction State
+Like the other live views, it auto-refreshes (pausable with `p`, manual with
+`r`) and supports filtering (`/`, matching user, host, db, state, and query).
+
+Actions:
+
+- `Enter` opens a detail view with every field in full plus the transaction's
+  statement history (see below).
+- `w` opens the transaction's query in the SQL Workspace with a metadata header.
+- `k` kills the connection holding the transaction (with confirmation and a
+  guard against killing the tool's own session).
+
+## Current statement, statement history, and rows locked
+
+`innodb_trx.trx_query` only reflects the statement a transaction is *currently*
+executing. A transaction that has run some statements and is now waiting for
+COMMIT (idle in transaction) reports no current query. To make such
+transactions understandable, the detail view also shows the connection's recent
+**statement history** from `performance_schema.events_statements_history`
+(most recent first, with timings). This is best-effort: if performance_schema
+statement history is unavailable or disabled, the detail view says so.
+
+`Rows Locked` is InnoDB's approximate count (`trx_rows_locked`) and includes
+index and gap locks, so it can exceed the number of rows in the table; it is
+labeled as an estimate.
 
 The purpose is to help identify long-running or problematic transactions.
 

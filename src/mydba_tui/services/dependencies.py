@@ -85,9 +85,7 @@ class DependencyGraph:
         key = f"{obj.obj_type.value}:{obj.schema}.{obj.name}"
         self.objects[key] = obj
 
-    def add_dependency(
-        self, source: ObjectRef, target: ObjectRef, label: str = ""
-    ) -> None:
+    def add_dependency(self, source: ObjectRef, target: ObjectRef, label: str = "") -> None:
         """Add a directed dependency edge with an optional label."""
         src_key = f"{source.obj_type.value}:{source.schema}.{source.name}"
         tgt_key = f"{target.obj_type.value}:{target.schema}.{target.name}"
@@ -156,10 +154,7 @@ def _enumerate_objects(
     objects: list[tuple[ObjectRef, str]] = []
 
     # Views
-    sql = (
-        "SELECT table_schema, table_name, view_definition "
-        "FROM information_schema.views"
-    )
+    sql = "SELECT table_schema, table_name, view_definition FROM information_schema.views"
     objects.extend(_fetch_objects(connection, sql, ObjectType.VIEW, "enum.views"))
 
     # Procedures
@@ -179,17 +174,11 @@ def _enumerate_objects(
     objects.extend(_fetch_objects(connection, sql, ObjectType.FUNCTION, "enum.functions"))
 
     # Triggers
-    sql = (
-        "SELECT trigger_schema, trigger_name, action_statement "
-        "FROM information_schema.triggers"
-    )
+    sql = "SELECT trigger_schema, trigger_name, action_statement FROM information_schema.triggers"
     objects.extend(_fetch_objects(connection, sql, ObjectType.TRIGGER, "enum.triggers"))
 
     # Events
-    sql = (
-        "SELECT event_schema, event_name, event_definition "
-        "FROM information_schema.events"
-    )
+    sql = "SELECT event_schema, event_name, event_definition FROM information_schema.events"
     objects.extend(_fetch_objects(connection, sql, ObjectType.EVENT, "enum.events"))
 
     return objects
@@ -329,9 +318,7 @@ def _parse_references(sql_definition: str, default_schema: str) -> list[str]:
     references: set[str] = set()
 
     # Extract CALL statements before stripping (sqlglot can't parse them)
-    for match in re.finditer(
-        r"\bCALL\s+(?:`?(\w+)`?\.)?`?(\w+)`?\s*\(", body, re.IGNORECASE
-    ):
+    for match in re.finditer(r"\bCALL\s+(?:`?(\w+)`?\.)?`?(\w+)`?\s*\(", body, re.IGNORECASE):
         call_schema = match.group(1) or default_schema
         call_name = match.group(2)
         references.add(f"{call_schema}.{call_name}")
@@ -339,23 +326,75 @@ def _parse_references(sql_definition: str, default_schema: str) -> list[str]:
     # Extract function calls: word( — before IF stripping removes conditions
     # MySQL built-in functions to ignore
     _builtins = {
-        "concat", "concat_ws", "if", "ifnull", "nullif", "coalesce",
-        "now", "curdate", "curtime", "date_add", "date_sub", "datediff",
-        "year", "month", "day", "hour", "minute", "second",
-        "count", "sum", "avg", "min", "max", "group_concat",
-        "left", "right", "substring", "trim", "upper", "lower", "replace",
-        "length", "char_length", "abs", "ceil", "floor", "round", "mod",
-        "last_insert_id", "row_count", "found_rows",
-        "cast", "convert", "date_format", "str_to_date",
-        "isnull", "greatest", "least", "field", "find_in_set",
-        "hex", "unhex", "md5", "sha1", "sha2", "uuid",
-        "json_extract", "json_set", "json_replace", "json_remove",
-        "json_object", "json_array", "json_contains", "json_length",
-        "values", "default", "exists",
+        "concat",
+        "concat_ws",
+        "if",
+        "ifnull",
+        "nullif",
+        "coalesce",
+        "now",
+        "curdate",
+        "curtime",
+        "date_add",
+        "date_sub",
+        "datediff",
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "count",
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "group_concat",
+        "left",
+        "right",
+        "substring",
+        "trim",
+        "upper",
+        "lower",
+        "replace",
+        "length",
+        "char_length",
+        "abs",
+        "ceil",
+        "floor",
+        "round",
+        "mod",
+        "last_insert_id",
+        "row_count",
+        "found_rows",
+        "cast",
+        "convert",
+        "date_format",
+        "str_to_date",
+        "isnull",
+        "greatest",
+        "least",
+        "field",
+        "find_in_set",
+        "hex",
+        "unhex",
+        "md5",
+        "sha1",
+        "sha2",
+        "uuid",
+        "json_extract",
+        "json_set",
+        "json_replace",
+        "json_remove",
+        "json_object",
+        "json_array",
+        "json_contains",
+        "json_length",
+        "values",
+        "default",
+        "exists",
     }
-    for match in re.finditer(
-        r"\b(?:`?(\w+)`?\.)?`?(\w+)`?\s*\(", body
-    ):
+    for match in re.finditer(r"\b(?:`?(\w+)`?\.)?`?(\w+)`?\s*\(", body):
         fn_schema = match.group(1)
         fn_name = match.group(2)
         if fn_name.lower() in _builtins:
@@ -392,20 +431,28 @@ def _parse_references(sql_definition: str, default_schema: str) -> list[str]:
     body = re.sub(
         r"\bDECLARE\b\s+\w+\s+(INT|TINYINT|SMALLINT|BIGINT|DECIMAL|FLOAT|DOUBLE|"
         r"VARCHAR|CHAR|TEXT|DATE|DATETIME|TIMESTAMP|BOOLEAN|BLOB)\b[^;]*;",
-        "", body, flags=re.IGNORECASE,
+        "",
+        body,
+        flags=re.IGNORECASE,
     )
     body = re.sub(
         r"\bDECLARE\b\s+(CONTINUE|EXIT)\s+HANDLER\b[^;]*;",
-        "", body, flags=re.IGNORECASE,
+        "",
+        body,
+        flags=re.IGNORECASE,
     )
     # Transform DECLARE cursor: extract the SELECT inside
     body = re.sub(
         r"\bDECLARE\b\s+\w+\s+CURSOR\s+FOR\s+",
-        "", body, flags=re.IGNORECASE,
+        "",
+        body,
+        flags=re.IGNORECASE,
     )
     # Remove standalone SET statements (variable assignments, not UPDATE ... SET)
     body = re.sub(
-        r"^\s*SET\s+@?\w+\s*=[^;]+;", "", body,
+        r"^\s*SET\s+@?\w+\s*=[^;]+;",
+        "",
+        body,
         flags=re.IGNORECASE | re.MULTILINE,
     )
     # Remove START TRANSACTION / COMMIT / ROLLBACK
@@ -418,7 +465,9 @@ def _parse_references(sql_definition: str, default_schema: str) -> list[str]:
     # Remove SELECT ... INTO var (converts to plain SELECT)
     body = re.sub(
         r"\bINTO\s+(?:@\w+|v_\w+)(?:\s*,\s*(?:@\w+|v_\w+))*",
-        "", body, flags=re.IGNORECASE,
+        "",
+        body,
+        flags=re.IGNORECASE,
     )
 
     # Parse with sqlglot — try individual statements for resilience

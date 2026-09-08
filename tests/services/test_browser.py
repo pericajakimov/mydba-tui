@@ -417,7 +417,9 @@ def test_grant_info_defaults() -> None:
 def test_grant_info_with_values() -> None:
     """GrantInfo should hold provided values."""
     g = GrantInfo(
-        user="app_user", host="10.0.0.%", grant_level="SCHEMA",
+        user="app_user",
+        host="10.0.0.%",
+        grant_level="SCHEMA",
         privileges="Select,Insert,Update",
     )
     assert g.user == "app_user"
@@ -555,9 +557,7 @@ def test_get_sample_data_binary_columns(mock_log: MagicMock) -> None:
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
-    col_names, rows = get_sample_data(
-        mock_conn, "mydb", "blobs", columns=columns, order="ASC"
-    )
+    col_names, rows = get_sample_data(mock_conn, "mydb", "blobs", columns=columns, order="ASC")
 
     assert col_names == ["id", "uuid", "payload"]
     assert rows[0][1] == "0xABCDEF0102030405060708090A0B0C0D"  # 16 bytes → hex
@@ -580,9 +580,7 @@ def test_get_sample_data_text_truncation(mock_log: MagicMock) -> None:
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
-    col_names, rows = get_sample_data(
-        mock_conn, "mydb", "posts", columns=columns, order="ASC"
-    )
+    col_names, rows = get_sample_data(mock_conn, "mydb", "posts", columns=columns, order="ASC")
 
     assert col_names == ["id", "body"]
     assert rows[0][1] == "a" * 100 + "..."
@@ -603,9 +601,7 @@ def test_get_sample_data_null_values(mock_log: MagicMock) -> None:
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
-    col_names, rows = get_sample_data(
-        mock_conn, "mydb", "users", columns=columns, order="ASC"
-    )
+    col_names, rows = get_sample_data(mock_conn, "mydb", "users", columns=columns, order="ASC")
 
     assert rows[0][1] == "NULL"
 
@@ -624,9 +620,7 @@ def test_get_sample_data_empty_table(mock_log: MagicMock) -> None:
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
-    col_names, rows = get_sample_data(
-        mock_conn, "mydb", "empty_table", columns=columns
-    )
+    col_names, rows = get_sample_data(mock_conn, "mydb", "empty_table", columns=columns)
 
     assert col_names == ["id", "name"]
     assert rows == []

@@ -26,9 +26,7 @@ class SqlInsertExporter(Exporter):
         assert self._file is not None
         values = ", ".join(sql_value(v) for v in row)
         cols = ", ".join(f"`{c}`" for c in self._col_names)
-        self._file.write(
-            f"INSERT INTO `{self._table_name}` ({cols}) VALUES ({values});\n"
-        )
+        self._file.write(f"INSERT INTO `{self._table_name}` ({cols}) VALUES ({values});\n")
         self._row_count += 1
 
 
@@ -66,8 +64,5 @@ class SqlInsertBatchExporter(Exporter):
             return
         cols = ", ".join(f"`{c}`" for c in self._col_names)
         values_str = ",\n  ".join(self._batch)
-        self._file.write(
-            f"INSERT INTO `{self._table_name}` ({cols}) VALUES\n"
-            f"  {values_str};\n\n"
-        )
+        self._file.write(f"INSERT INTO `{self._table_name}` ({cols}) VALUES\n  {values_str};\n\n")
         self._batch.clear()

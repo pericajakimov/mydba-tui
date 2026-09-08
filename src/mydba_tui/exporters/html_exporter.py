@@ -40,9 +40,7 @@ class HtmlExporter(Exporter):
             if val is None:
                 self._file.write('      <td class="null">NULL</td>\n')
             else:
-                self._file.write(
-                    f"      <td>{xml_escape(str(val))}</td>\n"
-                )
+                self._file.write(f"      <td>{xml_escape(str(val))}</td>\n")
         self._file.write("    </tr>\n")
         self._row_count += 1
 

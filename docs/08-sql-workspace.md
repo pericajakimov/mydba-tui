@@ -329,11 +329,32 @@ The metadata cache is built on first trigger and reused within the session.
 
 # Session Lifetime
 
-The SQL Workspace belongs to the current application session.
+The SQL Workspace belongs to the current application session. Its contents are
+not persisted to disk and are not restored after restarting the application.
+This intentionally matches the workflow of the traditional MySQL client.
 
-Its contents are not restored after reconnecting or restarting the application.
+## Session Log
 
-This behavior intentionally matches the workflow of the traditional MySQL client.
+Query execution, EXPLAIN, and direct export write to a session log stored under
+`~/.config/mydba/logs/sessions/` with owner-only permissions. The log is created
+lazily on the first execution and persists while you move between the Object
+Browser and the SQL Workspace.
+
+The log is deleted on a clean exit (F10) unless you explicitly save it
+(`Ctrl+Shift+S`).
+
+## Reconnect and profile changes
+
+The lifetime of the editor contents and session log depends on how the
+connection changes:
+
+- **Reconnect to the same endpoint (`X`)** — a fresh MySQL session against the
+  same host, port, and user. The editor contents and session log are
+  **preserved**; only server metadata (schema tree, autocomplete cache) is
+  reloaded.
+- **Switching to a different profile endpoint** — treated as a new work
+  session. The session log is rotated (the old one removed unless saved) and the
+  editor and results are cleared.
 
 ---
 
@@ -355,6 +376,7 @@ The following keybindings are available in the SQL Workspace:
 | Ctrl+Shift+E | Direct export (stream to file) |
 | Ctrl+R | Cycle row display limit |
 | Ctrl+Shift+S | Save session log |
+| Ctrl+Shift+X | Reconnect (same profile) |
 | F6 | Switch focus (editor / results) |
 | F10 | Exit application |
 | Esc | Back to Object Browser |

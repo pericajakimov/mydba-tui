@@ -13,6 +13,7 @@ from operator import attrgetter
 from typing import TYPE_CHECKING
 
 from rich.text import Text
+from textual import work
 from textual.app import App, ComposeResult
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.widgets import Footer, Header
@@ -31,7 +32,9 @@ from mydba_tui.ui.screens.main_workspace import MainWorkspaceScreen
 
 if TYPE_CHECKING:
     from mydba_tui.cli import CliOptions
+    from mydba_tui.connection import ConnectionResult
     from mydba_tui.models.profile import Profile
+    from mydba_tui.server import ServerInfo
     from mydba_tui.ui.screens.password_prompt import Credentials
 
 
@@ -106,6 +109,11 @@ class MyDBAApp(App[None]):
 
         self.settings: Settings = load_settings()
         self.cli_options: CliOptions = cli_options or CliOptions()
+        # Shared connection state (set on connect / reconnect).
+        self.db_connection: ConnectionResult | None = None
+        self.active_profile: Profile | None = None
+        self.server_info: ServerInfo | None = None
+        self.connection_status: str = ""
         super().__init__()
         self.theme = self.settings.theme
         self._setup_logging()
@@ -204,7 +212,6 @@ class MyDBAApp(App[None]):
     def _cli_do_connect(self, profile: Profile, password: str) -> None:
         """Perform the actual connection from CLI mode."""
         from mydba_tui.connection import connect
-        from mydba_tui.server import detect
 
         try:
             result = connect(profile, password)
@@ -212,35 +219,147 @@ class MyDBAApp(App[None]):
             self.notify(f"Connection failed:\n{e}", severity="error", timeout=10)
             return
 
-        self.db_connection = result
-        self.active_profile = profile
-
-        server_info = detect(result.connection)
-        self.server_info = server_info
-
-        # Build status
-        from mydba_tui.ui.screens.profiles import ENVIRONMENT_COLORS, _format_vendor
-
-        env_label = profile.environment.upper()
-        env_color = ENVIRONMENT_COLORS.get(profile.environment, "white")
-        vendor_display = _format_vendor(server_info)
-        role_display = f" | {server_info.role.capitalize()}" if server_info.role else ""
-        instance_display = ""
-        if server_info.aurora_server_id:
-            instance_display = f" | {server_info.aurora_server_id}"
-        elif server_info.wsrep_node_name:
-            instance_display = f" | {server_info.wsrep_node_name}"
-        db_display = f" | {server_info.current_database}" if server_info.current_database else ""
-        user_display = f" | {server_info.current_user}" if server_info.current_user else ""
-
-        status = (
-            f"[bold {env_color}]{env_label}[/bold {env_color}] {profile.name}"
-            f" | {vendor_display}{role_display}{instance_display}{db_display}{user_display}"
-        )
-        self.connection_status = status
+        self.apply_connection(profile, result)
 
         # Switch to main workspace
         self.pop_screen()  # Pop profiles if it's on top
+
+    # --- Connection state management ---
+
+    @staticmethod
+    def _same_endpoint(a: Profile | None, b: Profile | None) -> bool:
+        """Return True if two profiles target the same connection endpoint.
+
+        Endpoint identity is (host, port, username). Reconnecting to the same
+        endpoint is treated as a fresh MySQL session for the same logical work
+        session, so the session log and editor contents are preserved.
+        Switching endpoints rotates the session log and clears the workspace.
+        """
+        if a is None or b is None:
+            return False
+        return (a.host, a.port, a.username) == (b.host, b.port, b.username)
+
+    def apply_connection(self, profile: Profile, conn_result: ConnectionResult) -> None:
+        """Apply a freshly established connection as the active connection.
+
+        Closes any existing connection (and its SSH tunnel) to avoid leaks,
+        updates all shared app state, and rebuilds the status string. If the
+        new profile targets a different endpoint than the previous one, the
+        SQL workspace session log is rotated and its editor/results cleared.
+
+        Args:
+            profile: The connected profile.
+            conn_result: The live connection result to adopt.
+        """
+        from mydba_tui.server import detect
+        from mydba_tui.ui.screens.profiles import build_connection_status
+
+        previous_profile: Profile | None = getattr(self, "active_profile", None)
+        # First connect (no previous profile) is not a "change" — there is
+        # nothing to rotate or clear. Only an actual switch between two
+        # different endpoints should reset the workspace.
+        is_first_connect = previous_profile is None
+        endpoint_changed = not is_first_connect and not self._same_endpoint(
+            previous_profile, profile
+        )
+
+        # Close the previous connection/tunnel before replacing it.
+        previous = getattr(self, "db_connection", None)
+        if previous is not None and previous is not conn_result:
+            try:
+                previous.close()
+            except Exception:
+                pass
+
+        self.db_connection = conn_result
+        self.active_profile = profile
+
+        server_info = detect(conn_result.connection)
+        self.server_info = server_info
+        self.connection_status = build_connection_status(profile, server_info)
+
+        # Any new connection invalidates cached metadata used by autocomplete,
+        # since the server catalog may differ (fresh session or new endpoint).
+        self._invalidate_metadata_caches()
+
+        # Rotate the SQL workspace session log only when the endpoint changed.
+        if endpoint_changed:
+            self._reset_workspace_for_new_connection()
+
+    def _invalidate_metadata_caches(self) -> None:
+        """Clear cached schema/object/column metadata used by autocomplete."""
+        for attr in (
+            "_autocomplete_cache",
+            "_autocomplete_current_db",
+            "_column_cache",
+            "_schema_objects_map",
+        ):
+            if hasattr(self, attr):
+                setattr(self, attr, None)
+
+    def disconnect(self) -> None:
+        """Close and clear the active connection, if any."""
+        previous = getattr(self, "db_connection", None)
+        if previous is not None:
+            try:
+                previous.close()
+            except Exception:
+                pass
+        self.db_connection = None
+
+    def _reset_workspace_for_new_connection(self) -> None:
+        """Clear the SQL workspace state when switching connection endpoints."""
+        try:
+            workspace = self.get_screen("workspace", WorkspaceScreen)
+        except Exception:
+            return
+        workspace.reset_for_new_connection()
+
+    def reconnect(self) -> None:
+        """Reconnect to the current profile, refreshing the session context.
+
+        Tears down the existing connection and re-establishes it using the
+        active profile. Because the endpoint is unchanged, the session log and
+        editor contents are preserved while all metadata (schema tree, object
+        browser) reloads on resume. If there is no active profile, opens the
+        profiles screen instead.
+        """
+        profile: Profile | None = getattr(self, "active_profile", None)
+        if profile is None:
+            self.push_screen("profiles")
+            return
+        self.notify(f"Reconnecting to {profile.name} ...", severity="information")
+        self._reconnect_worker(profile)
+
+    @work(thread=True)
+    def _reconnect_worker(self, profile: Profile) -> None:
+        """Background worker that re-establishes the connection."""
+        from mydba_tui.connection import connect
+
+        password = profile.password
+        try:
+            result = connect(profile, password)
+        except Exception as e:
+            self.call_from_thread(
+                self.notify, f"Reconnect failed:\n{e}", severity="error", timeout=10
+            )
+            return
+        self.call_from_thread(self._on_reconnect_success, profile, result)
+
+    def _on_reconnect_success(self, profile: Profile, result: ConnectionResult) -> None:
+        """Adopt the reconnected session and refresh visible screens."""
+        self.apply_connection(profile, result)
+        self.notify(f"Reconnected to {profile.name}", severity="information")
+        # Refresh whichever screen is on top (browser tree / workspace status).
+        screen = self.screen
+        for hook in ("reload_after_reconnect", "on_screen_resume"):
+            method = getattr(screen, hook, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:
+                    pass
+                break
 
 
 def main() -> None:

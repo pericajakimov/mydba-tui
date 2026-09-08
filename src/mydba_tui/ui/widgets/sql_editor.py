@@ -110,11 +110,7 @@ class CompletionPopup(Widget):
         """Rebuild the display content."""
         self.remove_children()
         for i, item in enumerate(self._items[:15]):  # Show max 15 items
-            cls = (
-                "completion-item-selected"
-                if i == self.highlighted
-                else "completion-item"
-            )
+            cls = "completion-item-selected" if i == self.highlighted else "completion-item"
             self.mount(Static(item, classes=cls))
 
 

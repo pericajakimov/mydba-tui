@@ -562,13 +562,27 @@ If the role cannot be determined, no role is displayed.
 
 # Reconnect
 
-Reconnect is an explicit user action.
+Reconnect is an explicit user action, triggered with the `X` key. It is
+available from both the Object Browser and the SQL Workspace.
 
-It establishes a new database connection using the current profile.
+> In the SQL Workspace the editor captures single letters, so reconnect is
+> bound to `Ctrl+Shift+X` there. On the Object Browser it is the bare `X` key.
 
-The SQL Workspace remains unchanged.
+It establishes a new database connection using the current profile:
 
-A successful reconnect results in a new MySQL connection ID.
+- The previous connection and any SSH tunnel are closed first (no leaks).
+- A new MySQL connection is established to the same endpoint, giving a new
+  connection ID and a fresh session context.
+- All metadata is reloaded: the schema tree, object browser content, and the
+  autocomplete metadata cache are rebuilt against the new connection.
+
+Because reconnect targets the **same endpoint** (same host, port, and user),
+the SQL Workspace session is preserved: the editor contents and the session
+log are kept. Switching to a **different** profile endpoint instead rotates the
+session log and clears the editor and results (see
+[SQL Workspace — Session Lifetime](08-sql-workspace.md)).
+
+If there is no active profile, Reconnect opens the connection profiles screen.
 
 ---
 

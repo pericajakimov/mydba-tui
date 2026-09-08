@@ -92,12 +92,7 @@ def test_group_suffix_partial_override(tmp_path: Path) -> None:
     """Group suffix should only override fields it defines."""
     cnf = tmp_path / ".my.cnf"
     cnf.write_text(
-        "[client]\n"
-        "user=base_user\n"
-        "password=base_pass\n"
-        "\n"
-        "[client_reporting]\n"
-        "user=report_user\n",
+        "[client]\nuser=base_user\npassword=base_pass\n\n[client_reporting]\nuser=report_user\n",
         encoding="utf-8",
     )
 

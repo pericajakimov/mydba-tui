@@ -49,9 +49,7 @@ def test_csv_export(tmp_path: Path, col_names: list[str], rows: list) -> None:
     assert lines[3] == "3,Charlie,inactive"
 
 
-def test_csv_semicolon_export(
-    tmp_path: Path, col_names: list[str], rows: list
-) -> None:
+def test_csv_semicolon_export(tmp_path: Path, col_names: list[str], rows: list) -> None:
     """CsvSemicolonExporter should use semicolons."""
     path = tmp_path / "test.csv"
     exporter = CsvSemicolonExporter()
@@ -93,9 +91,7 @@ def test_sql_export(tmp_path: Path, col_names: list[str], rows: list) -> None:
     assert "NULL" in content
 
 
-def test_sql_batch_export(
-    tmp_path: Path, col_names: list[str], rows: list
-) -> None:
+def test_sql_batch_export(tmp_path: Path, col_names: list[str], rows: list) -> None:
     """SqlInsertBatchExporter should produce multi-row INSERTs."""
     path = tmp_path / "test.sql"
     exporter = SqlInsertBatchExporter(table_name="users")
@@ -173,9 +169,7 @@ def test_html_export(tmp_path: Path, col_names: list[str], rows: list) -> None:
 # --- Markdown ---
 
 
-def test_markdown_export(
-    tmp_path: Path, col_names: list[str], rows: list
-) -> None:
+def test_markdown_export(tmp_path: Path, col_names: list[str], rows: list) -> None:
     """MarkdownExporter should produce a Markdown table."""
     path = tmp_path / "test.md"
     exporter = MarkdownExporter()
@@ -192,9 +186,7 @@ def test_markdown_export(
 # --- Safety ---
 
 
-def test_export_file_exists_error(
-    tmp_path: Path, col_names: list[str], rows: list
-) -> None:
+def test_export_file_exists_error(tmp_path: Path, col_names: list[str], rows: list) -> None:
     """Export should fail if file already exists."""
     path = tmp_path / "existing.csv"
     path.write_text("already here")
@@ -234,8 +226,16 @@ def test_auto_discovery_finds_all_exporters() -> None:
     from mydba_tui.exporters import EXPORTERS
 
     expected_keys = {
-        "csv", "csv_semicolon", "tsv", "sql", "sql_batch",
-        "jsonl", "json", "xml", "html", "markdown",
+        "csv",
+        "csv_semicolon",
+        "tsv",
+        "sql",
+        "sql_batch",
+        "jsonl",
+        "json",
+        "xml",
+        "html",
+        "markdown",
     }
     assert expected_keys.issubset(set(EXPORTERS.keys()))
 

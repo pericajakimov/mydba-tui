@@ -792,8 +792,7 @@ def _format_value(val: Any, col_type: str) -> str:
 def _is_binary_type(col_type: str) -> bool:
     """Check if a column type is binary/blob."""
     return any(
-        t in col_type
-        for t in ("binary", "varbinary", "blob", "tinyblob", "mediumblob", "longblob")
+        t in col_type for t in ("binary", "varbinary", "blob", "tinyblob", "mediumblob", "longblob")
     )
 
 
@@ -802,8 +801,15 @@ def _is_text_type(col_type: str) -> bool:
     return any(
         t in col_type
         for t in (
-            "text", "tinytext", "mediumtext", "longtext",
-            "varchar", "char", "json", "enum", "set",
+            "text",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "varchar",
+            "char",
+            "json",
+            "enum",
+            "set",
         )
     )
 

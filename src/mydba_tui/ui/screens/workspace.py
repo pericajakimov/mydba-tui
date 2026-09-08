@@ -41,48 +41,88 @@ class WorkspaceScreen(Screen[None]):
         Binding("f5", "execute", "Execute", key_display="F5", priority=True),
         Binding("f7", "explain", "Explain", key_display="F7", priority=True),
         Binding(
-            "shift+f7", "explain_json", "Explain JSON",
-            key_display="⇧F7", priority=True,
+            "shift+f7",
+            "explain_json",
+            "Explain JSON",
+            key_display="⇧F7",
+            priority=True,
         ),
         Binding(
-            "f8", "explain_analyze", "Analyze",
-            key_display="F8", priority=True,
+            "f8",
+            "explain_analyze",
+            "Analyze",
+            key_display="F8",
+            priority=True,
         ),
         Binding(
-            "ctrl+s", "save_file", "Save SQL",
-            key_display="^S", priority=True,
+            "ctrl+s",
+            "save_file",
+            "Save SQL",
+            key_display="^S",
+            priority=True,
         ),
         Binding(
-            "ctrl+o", "load_file", "Open SQL",
-            key_display="^O", priority=True,
+            "ctrl+o",
+            "load_file",
+            "Open SQL",
+            key_display="^O",
+            priority=True,
         ),
         Binding(
-            "ctrl+l", "clear_results", "Clear",
-            key_display="^L", priority=True,
+            "ctrl+l",
+            "clear_results",
+            "Clear",
+            key_display="^L",
+            priority=True,
         ),
         Binding(
-            "ctrl+e", "export_results", "Export",
-            key_display="^E", priority=True,
+            "ctrl+e",
+            "export_results",
+            "Export",
+            key_display="^E",
+            priority=True,
         ),
         Binding(
-            "ctrl+shift+e", "direct_export", "Direct Export",
-            key_display="^⇧E", priority=True,
+            "ctrl+shift+e",
+            "direct_export",
+            "Direct Export",
+            key_display="^⇧E",
+            priority=True,
         ),
         Binding(
-            "ctrl+r", "cycle_row_limit", "Row Limit",
-            key_display="^R", priority=True,
+            "ctrl+r",
+            "cycle_row_limit",
+            "Row Limit",
+            key_display="^R",
+            priority=True,
         ),
         Binding(
-            "ctrl+shift+s", "save_log", "Save Log",
-            key_display="^⇧S", priority=True,
+            "ctrl+shift+s",
+            "save_log",
+            "Save Log",
+            key_display="^⇧S",
+            priority=True,
         ),
         Binding(
-            "ctrl+shift+f", "format_sql", "Format",
-            key_display="^⇧F", priority=True,
+            "ctrl+shift+f",
+            "format_sql",
+            "Format",
+            key_display="^⇧F",
+            priority=True,
         ),
         Binding(
-            "f6", "switch_focus", "Switch Panel",
-            key_display="F6", priority=True,
+            "f6",
+            "switch_focus",
+            "Switch Panel",
+            key_display="F6",
+            priority=True,
+        ),
+        Binding(
+            "ctrl+shift+x",
+            "reconnect",
+            "Reconnect",
+            key_display="^⇧X",
+            priority=True,
         ),
         Binding("f10", "quit", "Exit", key_display="F10", priority=True),
         Binding("escape", "go_back", "Back", key_display="Esc"),
@@ -141,8 +181,7 @@ class WorkspaceScreen(Screen[None]):
             yield SQLEditor(id="sql-editor")
             yield ScrollableContainer(
                 Static(
-                    "[dim]Press F5 to execute SQL. "
-                    "F7 for EXPLAIN. F8 for EXPLAIN ANALYZE.[/dim]",
+                    "[dim]Press F5 to execute SQL. F7 for EXPLAIN. F8 for EXPLAIN ANALYZE.[/dim]",
                     classes="result-info",
                 ),
                 id="results-panel",
@@ -217,9 +256,7 @@ class WorkspaceScreen(Screen[None]):
             header_lines.append(f"# Connection: {plain_status.strip()}")
 
         header_lines.append("")
-        self._session_log_path.write_text(
-            "\n".join(header_lines) + "\n", encoding="utf-8"
-        )
+        self._session_log_path.write_text("\n".join(header_lines) + "\n", encoding="utf-8")
 
     def _log_to_session(
         self,
@@ -232,11 +269,7 @@ class WorkspaceScreen(Screen[None]):
             return
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry = (
-            f"-- [{ts}] ({_format_duration(duration)})\n"
-            f"{sql};\n\n"
-            f"{result_text}\n\n"
-        )
+        entry = f"-- [{ts}] ({_format_duration(duration)})\n{sql};\n\n{result_text}\n\n"
         try:
             with open(self._session_log_path, "a", encoding="utf-8") as f:
                 f.write(entry)
@@ -251,6 +284,52 @@ class WorkspaceScreen(Screen[None]):
             except Exception:
                 pass
             self._session_log_path = None
+
+    def reset_for_new_connection(self) -> None:
+        """Reset workspace state when switching to a different connection.
+
+        Called when the active connection endpoint changes (a genuine profile
+        switch, not a same-host reconnect). Rotates the session log and clears
+        the editor and results so the new connection starts clean. A same-host
+        reconnect deliberately does not call this, preserving the work session.
+        """
+        # Rotate the session log (delete unsaved, force a fresh one next time).
+        self._cleanup_session_log()
+        self._session_saved = False
+
+        # Clear the editor.
+        try:
+            editor = self.query_one("#sql-editor", SQLEditor).editor
+            editor.clear()
+        except Exception:
+            pass
+
+        # Clear results and status.
+        try:
+            panel = self.query_one("#results-panel", ScrollableContainer)
+            panel.remove_children()
+            panel.mount(
+                Static(
+                    "[dim]Press F5 to execute SQL. F7 for EXPLAIN. F8 for EXPLAIN ANALYZE.[/dim]",
+                    classes="result-info",
+                )
+            )
+        except Exception:
+            pass
+        self._result_count = 0
+        self._results_store.clear()
+        self._file_path = ""
+        if self.is_mounted:
+            self._sync_status_bar()
+
+    def reload_after_reconnect(self) -> None:
+        """Refresh workspace state after a reconnect to the same endpoint.
+
+        The session log and editor are preserved; only the status bar is
+        re-synced (metadata caches are rebuilt lazily on next autocomplete).
+        """
+        if self.is_mounted:
+            self._sync_status_bar()
 
     # --- Execution ---
 
@@ -312,9 +391,7 @@ class WorkspaceScreen(Screen[None]):
         conn_result = getattr(self.app, "db_connection", None)
         if conn_result is None or not isinstance(conn_result, ConnectionResult):
             self.app.call_from_thread(self._remove_status)
-            self.app.call_from_thread(
-                self._append_error, "Not connected to a database."
-            )
+            self.app.call_from_thread(self._append_error, "Not connected to a database.")
             return
 
         # Split into individual statements (handles ; and \G)
@@ -325,9 +402,7 @@ class WorkspaceScreen(Screen[None]):
             if not stmt:
                 continue
 
-            self.app.call_from_thread(
-                self._update_status, f"Executing: {stmt[:60]}..."
-            )
+            self.app.call_from_thread(self._update_status, f"Executing: {stmt[:60]}...")
 
             start = _time.perf_counter()
             try:
@@ -340,9 +415,7 @@ class WorkspaceScreen(Screen[None]):
                 if cursor.description:
                     col_names = [desc[0] for desc in cursor.description]
 
-                    self.app.call_from_thread(
-                        self._update_status, "Fetching results..."
-                    )
+                    self.app.call_from_thread(self._update_status, "Fetching results...")
 
                     # Fetch ALL rows (stored for potential export)
                     rows = cursor.fetchall()
@@ -383,9 +456,7 @@ class WorkspaceScreen(Screen[None]):
                     summary = f"{affected} row(s) affected"
 
                     self.app.call_from_thread(self._remove_status)
-                    self.app.call_from_thread(
-                        self._append_info, stmt, summary, duration
-                    )
+                    self.app.call_from_thread(self._append_info, stmt, summary, duration)
                     self._log_to_session(stmt, summary, duration)
 
             except Exception as e:
@@ -428,9 +499,7 @@ class WorkspaceScreen(Screen[None]):
     def _append_status(self, message: str) -> None:
         """Show a status message at the bottom of results."""
         panel = self.query_one("#results-panel", ScrollableContainer)
-        panel.mount(
-            Static(f"[bold yellow]⏳ {message}[/bold yellow]", id="exec-status")
-        )
+        panel.mount(Static(f"[bold yellow]⏳ {message}[/bold yellow]", id="exec-status"))
         panel.scroll_end()
 
     def _update_status(self, message: str) -> None:
@@ -486,9 +555,7 @@ class WorkspaceScreen(Screen[None]):
         # Data (colored Rich Text)
         data_lines: list[str] = []
         if not rows:
-            panel.mount(
-                Static("[dim]Empty set.[/dim]", classes="result-block")
-            )
+            panel.mount(Static("[dim]Empty set.[/dim]", classes="result-block"))
         elif vertical:
             # Vertical output (\G style) — colored
             data_text = _build_vertical_text(col_names, rows)
@@ -498,9 +565,7 @@ class WorkspaceScreen(Screen[None]):
             data_lines = _build_vertical_plain(col_names, rows)
         else:
             # Tabular output — colored
-            result_format = getattr(
-                getattr(self.app, "settings", None), "result_format", "mysql"
-            )
+            result_format = getattr(getattr(self.app, "settings", None), "result_format", "mysql")
             data_text = _build_table_text(col_names, rows, result_format)
             data_widget = Static(data_text, classes="result-data")
             data_widget.styles.width = "auto"
@@ -509,9 +574,7 @@ class WorkspaceScreen(Screen[None]):
             data_lines = _build_table_plain(col_names, rows, result_format)
 
         # Summary AFTER results
-        panel.mount(
-            Static(f"[bold]{summary}[/bold]\n", classes="result-block")
-        )
+        panel.mount(Static(f"[bold]{summary}[/bold]\n", classes="result-block"))
 
         panel.scroll_end()
 
@@ -556,9 +619,7 @@ class WorkspaceScreen(Screen[None]):
         if sql:
             lines.append(f"[dim]{rich_escape(sql.rstrip(';'))};[/dim]")
             lines.append("")
-        lines.append(
-            f"[bold red]ERROR:[/bold red] [red]{rich_escape(error)}[/red]"
-        )
+        lines.append(f"[bold red]ERROR:[/bold red] [red]{rich_escape(error)}[/red]")
         lines.append("")
 
         panel.mount(Static("\n".join(lines), classes="result-block"))
@@ -632,9 +693,7 @@ class WorkspaceScreen(Screen[None]):
         """Clear all results from the results panel."""
         panel = self.query_one("#results-panel", ScrollableContainer)
         panel.remove_children()
-        panel.mount(
-            Static("[dim]Results cleared.[/dim]", classes="result-info")
-        )
+        panel.mount(Static("[dim]Results cleared.[/dim]", classes="result-info"))
         self._result_count = 0
         self._results_store.clear()
 
@@ -750,17 +809,13 @@ class WorkspaceScreen(Screen[None]):
         conn_result = getattr(self.app, "db_connection", None)
         if conn_result is None or not isinstance(conn_result, ConnectionResult):
             self.app.call_from_thread(self._remove_status)
-            self.app.call_from_thread(
-                self._append_error, "Not connected to a database."
-            )
+            self.app.call_from_thread(self._append_error, "Not connected to a database.")
             return
 
         exporter_cls = EXPORTERS.get(fmt)
         if not exporter_cls:
             self.app.call_from_thread(self._remove_status)
-            self.app.call_from_thread(
-                self._append_error, f"Unknown format: {fmt}"
-            )
+            self.app.call_from_thread(self._append_error, f"Unknown format: {fmt}")
             return
 
         start = _time.perf_counter()
@@ -831,9 +886,7 @@ class WorkspaceScreen(Screen[None]):
 
         except Exception as e:
             self.app.call_from_thread(self._remove_status)
-            self.app.call_from_thread(
-                self._append_error, str(e), sql
-            )
+            self.app.call_from_thread(self._append_error, str(e), sql)
 
     def _append_direct_export_result(self, msg: str) -> None:
         """Show direct export result in the results panel."""
@@ -888,9 +941,7 @@ class WorkspaceScreen(Screen[None]):
             return
 
         try:
-            formatted = sqlglot.transpile(
-                sql.strip(), read="mysql", write="mysql", pretty=True
-            )
+            formatted = sqlglot.transpile(sql.strip(), read="mysql", write="mysql", pretty=True)
             result = ";\n\n".join(formatted)
             if not result.endswith(";"):
                 result += ";"
@@ -957,9 +1008,7 @@ class WorkspaceScreen(Screen[None]):
             else:
                 # It's table.column completion
                 table_columns = self._get_table_columns_cache()
-                items = get_completions_after_dot(
-                    name_before_dot, table_columns, prefix_after_dot
-                )
+                items = get_completions_after_dot(name_before_dot, table_columns, prefix_after_dot)
         else:
             # Get word prefix — need at least 2 chars to trigger
             prefix = _get_word_at_cursor(text_before)
@@ -974,7 +1023,10 @@ class WorkspaceScreen(Screen[None]):
             # Detect if we're at the start of a statement
             at_start = _is_statement_start(text_before)
             items = get_completions(
-                prefix, schema_objects, table_columns, current_table,
+                prefix,
+                schema_objects,
+                table_columns,
+                current_table,
                 at_statement_start=at_start,
             )
 
@@ -1130,7 +1182,7 @@ class WorkspaceScreen(Screen[None]):
                     pos = line_upper.find(kw)
                     if pos >= 0:
                         # Extract table name after keyword
-                        after = lines[i][pos + len(kw):].strip()
+                        after = lines[i][pos + len(kw) :].strip()
                         table = after.split()[0].strip("`") if after else ""
                         if table:
                             return table
@@ -1148,6 +1200,10 @@ class WorkspaceScreen(Screen[None]):
         # Don't delete session log — it persists across workspace visits
         self.app.pop_screen()
 
+    def action_reconnect(self) -> None:
+        """Reconnect to the current profile (preserves session log/editor)."""
+        self.app.reconnect()  # type: ignore[attr-defined]
+
     def action_quit(self) -> None:
         """Exit the application."""
         self._cleanup_session_log()
@@ -1164,7 +1220,7 @@ def _get_word_at_cursor(text_before_cursor: str) -> str:
     i = len(text_before_cursor) - 1
     while i >= 0 and (text_before_cursor[i].isalnum() or text_before_cursor[i] == "_"):
         i -= 1
-    return text_before_cursor[i + 1:]
+    return text_before_cursor[i + 1 :]
 
 
 def _format_duration(seconds: float) -> str:
@@ -1230,9 +1286,7 @@ def _apply_format_rules(sql: str, app: Any) -> str:
 
         all_kw = _KEYWORDS | _FLOW_KEYWORDS
         for kw in sorted(all_kw, key=len, reverse=True):
-            sql = re.sub(
-                rf"\b{kw}\b", kw.lower(), sql, flags=re.IGNORECASE
-            )
+            sql = re.sub(rf"\b{kw}\b", kw.lower(), sql, flags=re.IGNORECASE)
 
     # Rule: indent_width (post-process indentation)
     indent_width = rules.get("indent_width", 2)
@@ -1317,9 +1371,7 @@ def _is_json(s: str) -> bool:
     stripped = s.strip()
     if not stripped:
         return False
-    if (stripped[0] == "{" and stripped[-1] == "}") or (
-        stripped[0] == "[" and stripped[-1] == "]"
-    ):
+    if (stripped[0] == "{" and stripped[-1] == "}") or (stripped[0] == "[" and stripped[-1] == "]"):
         import json
 
         try:
@@ -1393,9 +1445,7 @@ def _styled_cell(val: Any) -> Text:
     return t
 
 
-def _build_table_text(
-    col_names: list[str], rows: list[Any], fmt: str
-) -> Text:
+def _build_table_text(col_names: list[str], rows: list[Any], fmt: str) -> Text:
     """Build a colored Rich Text table from result data."""
     # Calculate widths and format cells
     col_widths = [len(name) for name in col_names]
@@ -1441,9 +1491,7 @@ def _build_table_text(
         text.append(border, style=_S_BORDER)
     else:
         # Simple format
-        hdr = "  ".join(
-            f"{name:<{col_widths[i]}}" for i, name in enumerate(col_names)
-        )
+        hdr = "  ".join(f"{name:<{col_widths[i]}}" for i, name in enumerate(col_names))
         text.append(hdr + "\n", style=_S_HEADER)
         sep = "  ".join("-" * w for w in col_widths)
         text.append(sep + "\n", style=_S_BORDER)
@@ -1469,9 +1517,7 @@ def _build_vertical_text(col_names: list[str], rows: list[Any]) -> Text:
     text = Text()
 
     for row_num, row in enumerate(rows, 1):
-        text.append(
-            f"{'*' * 27} {row_num}. row {'*' * 27}\n", style=_S_BORDER
-        )
+        text.append(f"{'*' * 27} {row_num}. row {'*' * 27}\n", style=_S_BORDER)
         for i, val in enumerate(row):
             name = col_names[i] if i < len(col_names) else f"col{i}"
             text.append(f"{name:>{max_name_len}}: ", style=_S_HEADER)
@@ -1483,9 +1529,7 @@ def _build_vertical_text(col_names: list[str], rows: list[Any]) -> Text:
     return text
 
 
-def _build_table_plain(
-    col_names: list[str], rows: list[Any], fmt: str
-) -> list[str]:
+def _build_table_plain(col_names: list[str], rows: list[Any], fmt: str) -> list[str]:
     """Build plain text table for log file (no colors)."""
     col_widths = [len(name) for name in col_names]
     str_rows: list[list[str]] = []
@@ -1499,18 +1543,19 @@ def _build_table_plain(
     lines: list[str] = []
     if fmt == "mysql":
         border = "+" + "+".join("-" * (w + 2) for w in col_widths) + "+"
-        hdr = "|" + "|".join(
-            f" {name:<{col_widths[i]}} " for i, name in enumerate(col_names)
-        ) + "|"
+        hdr = "|" + "|".join(f" {name:<{col_widths[i]}} " for i, name in enumerate(col_names)) + "|"
         lines.append(border)
         lines.append(hdr)
         lines.append(border)
         for str_row in str_rows:
-            row_line = "|" + "|".join(
-                f" {val:<{col_widths[i]}} "
-                if i < len(col_widths) else f" {val} "
-                for i, val in enumerate(str_row)
-            ) + "|"
+            row_line = (
+                "|"
+                + "|".join(
+                    f" {val:<{col_widths[i]}} " if i < len(col_widths) else f" {val} "
+                    for i, val in enumerate(str_row)
+                )
+                + "|"
+            )
             lines.append(row_line)
         lines.append(border)
     else:
@@ -1582,9 +1627,7 @@ class _ExportFormatScreen(Screen[str]):
 
         with Vertical(id="export-format-container"):
             yield Static("[bold]Export format:[/bold]\n")
-            options = [
-                EXPORTERS[key].name for key in sorted(EXPORTERS.keys())
-            ]
+            options = [EXPORTERS[key].name for key in sorted(EXPORTERS.keys())]
             yield OptionList(*options, id="format-list")
 
     def on_mount(self) -> None:
@@ -1663,16 +1706,12 @@ class _FilePromptScreen(Screen[str]):
         """Focus the input."""
         self.query_one("#file-path-input", Input).focus()
 
-    def on_directory_tree_file_selected(
-        self, event: Any
-    ) -> None:
+    def on_directory_tree_file_selected(self, event: Any) -> None:
         """When a file is selected in the tree, put its full path in the input."""
         inp = self.query_one("#file-path-input", Input)
         inp.value = str(event.path)
 
-    def on_directory_tree_directory_selected(
-        self, event: Any
-    ) -> None:
+    def on_directory_tree_directory_selected(self, event: Any) -> None:
         """When a directory is selected, update the input with the directory path."""
         self._current_dir = Path(event.path)
         inp = self.query_one("#file-path-input", Input)

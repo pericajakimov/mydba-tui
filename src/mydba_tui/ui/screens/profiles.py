@@ -369,7 +369,6 @@ class ProfilesScreen(ModalScreen[None]):
     def _on_connect_success(self, profile: Profile, result: object) -> None:
         """Handle successful connection (called on main thread)."""
         from mydba_tui.connection import ConnectionResult
-        from mydba_tui.server import detect
 
         conn_result = (
             ConnectionResult(
@@ -379,30 +378,9 @@ class ProfilesScreen(ModalScreen[None]):
             if not isinstance(result, ConnectionResult)
             else result
         )
-        server_info = detect(conn_result.connection)
-        self.app.db_connection = conn_result  # type: ignore[attr-defined]
-        self.app.active_profile = profile  # type: ignore[attr-defined]
-        self.app.server_info = server_info  # type: ignore[attr-defined]
-
-        # Build status text with colored environment
-        env_label = profile.environment.upper()
-        env_color = ENVIRONMENT_COLORS.get(profile.environment, "white")
-        vendor_display = _format_vendor(server_info)
-        role_display = f" | {server_info.role.capitalize()}" if server_info.role else ""
-        instance_display = ""
-        if server_info.aurora_server_id:
-            instance_display = f" | {server_info.aurora_server_id}"
-        elif server_info.wsrep_node_name:
-            instance_display = f" | {server_info.wsrep_node_name}"
-        db_display = f" | {server_info.current_database}" if server_info.current_database else ""
-        user_display = f" | {server_info.current_user}" if server_info.current_user else ""
-
-        status = (
-            f"[bold {env_color}]{env_label}[/bold {env_color}] {profile.name}"
-            f" | {vendor_display}{role_display}{instance_display}{db_display}{user_display}"
-        )
-
-        self.app.connection_status = status  # type: ignore[attr-defined]
+        # Centralized: closes the old connection, sets shared state, builds
+        # status, and rotates the session log if the profile changed.
+        self.app.apply_connection(profile, conn_result)  # type: ignore[attr-defined]
         self.notify(f"Connected to {profile.name}", severity="information")
 
         # Pop profiles screen — workspace underneath will refresh
@@ -478,3 +456,35 @@ def _format_vendor(server_info: ServerInfo) -> str:
         return version_str
 
     return f"{name} {server_info.version}"
+
+
+def build_connection_status(profile: Profile, server_info: ServerInfo) -> str:
+    """Build the Rich-markup status string shown in the status bar.
+
+    Centralizes the status formatting used after a successful connection
+    (interactive, CLI, and reconnect paths).
+
+    Args:
+        profile: The connected profile.
+        server_info: Detected server information.
+
+    Returns:
+        Rich-markup string with environment, profile name, vendor/version,
+        role, instance, current database, and current user.
+    """
+    env_label = profile.environment.upper()
+    env_color = ENVIRONMENT_COLORS.get(profile.environment, "white")
+    vendor_display = _format_vendor(server_info)
+    role_display = f" | {server_info.role.capitalize()}" if server_info.role else ""
+    instance_display = ""
+    if server_info.aurora_server_id:
+        instance_display = f" | {server_info.aurora_server_id}"
+    elif server_info.wsrep_node_name:
+        instance_display = f" | {server_info.wsrep_node_name}"
+    db_display = f" | {server_info.current_database}" if server_info.current_database else ""
+    user_display = f" | {server_info.current_user}" if server_info.current_user else ""
+
+    return (
+        f"[bold {env_color}]{env_label}[/bold {env_color}] {profile.name}"
+        f" | {vendor_display}{role_display}{instance_display}{db_display}{user_display}"
+    )

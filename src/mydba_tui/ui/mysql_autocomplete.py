@@ -70,35 +70,60 @@ _KEYWORD_ITEMS = [
 ]
 
 _FUNCTION_ITEMS = [
-    CompletionItem(text=f"{fn}(", kind=CompletionKind.FUNCTION)
-    for fn in sorted(_FUNCTIONS)
+    CompletionItem(text=f"{fn}(", kind=CompletionKind.FUNCTION) for fn in sorted(_FUNCTIONS)
 ]
 
-_TYPE_ITEMS = [
-    CompletionItem(text=t, kind=CompletionKind.TYPE)
-    for t in sorted(_TYPES)
-]
+_TYPE_ITEMS = [CompletionItem(text=t, kind=CompletionKind.TYPE) for t in sorted(_TYPES)]
 
 # All static items combined
 _ALL_STATIC = _KEYWORD_ITEMS + _FUNCTION_ITEMS + _TYPE_ITEMS
 
 # Keywords that can start a SQL statement
-_STATEMENT_STARTERS = frozenset({
-    "SELECT", "INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE",
-    "CREATE", "ALTER", "DROP", "RENAME", "TRUNCATE",
-    "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "ANALYZE",
-    "USE", "SET", "CALL", "DO",
-    "LOCK", "UNLOCK", "FLUSH", "RESET",
-    "START", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT",
-    "GRANT", "REVOKE",
-    "LOAD", "PREPARE", "EXECUTE", "DEALLOCATE",
-    "WITH", "HANDLER",
-    "DELIMITER",
-})
+_STATEMENT_STARTERS = frozenset(
+    {
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "REPLACE",
+        "MERGE",
+        "CREATE",
+        "ALTER",
+        "DROP",
+        "RENAME",
+        "TRUNCATE",
+        "SHOW",
+        "DESCRIBE",
+        "DESC",
+        "EXPLAIN",
+        "ANALYZE",
+        "USE",
+        "SET",
+        "CALL",
+        "DO",
+        "LOCK",
+        "UNLOCK",
+        "FLUSH",
+        "RESET",
+        "START",
+        "BEGIN",
+        "COMMIT",
+        "ROLLBACK",
+        "SAVEPOINT",
+        "GRANT",
+        "REVOKE",
+        "LOAD",
+        "PREPARE",
+        "EXECUTE",
+        "DEALLOCATE",
+        "WITH",
+        "HANDLER",
+        "DELIMITER",
+    }
+)
 
 _STARTER_ITEMS = [
-    CompletionItem(text=kw, kind=CompletionKind.KEYWORD)
-    for kw in sorted(_STATEMENT_STARTERS)
+    CompletionItem(text=kw, kind=CompletionKind.KEYWORD) for kw in sorted(_STATEMENT_STARTERS)
 ]
 
 
@@ -141,9 +166,9 @@ def get_completions(
         cols = table_columns.get(current_table, [])
         for col in cols:
             if col.upper().startswith(upper_prefix):
-                results.append(CompletionItem(
-                    text=col, kind=CompletionKind.COLUMN, detail=current_table
-                ))
+                results.append(
+                    CompletionItem(text=col, kind=CompletionKind.COLUMN, detail=current_table)
+                )
 
     # Static items (keywords, functions, types)
     if at_statement_start:
@@ -201,9 +226,7 @@ def get_completions_after_dot(
     results = []
     for col in cols:
         if not upper_prefix or col.upper().startswith(upper_prefix):
-            results.append(CompletionItem(
-                text=col, kind=CompletionKind.COLUMN, detail=table_name
-            ))
+            results.append(CompletionItem(text=col, kind=CompletionKind.COLUMN, detail=table_name))
 
     return results[:50]
 

@@ -26,15 +26,10 @@ class XmlExporter(Exporter):
         for i, val in enumerate(row):
             col = self._col_names[i] if i < len(self._col_names) else f"col{i}"
             if val is None:
-                self._file.write(
-                    f'    <field name="{xml_escape(col)}" xsi:nil="true" />\n'
-                )
+                self._file.write(f'    <field name="{xml_escape(col)}" xsi:nil="true" />\n')
             else:
                 escaped_val = xml_escape(str(val))
-                self._file.write(
-                    f'    <field name="{xml_escape(col)}">'
-                    f"{escaped_val}</field>\n"
-                )
+                self._file.write(f'    <field name="{xml_escape(col)}">{escaped_val}</field>\n')
         self._file.write("  </row>\n")
         self._row_count += 1
 

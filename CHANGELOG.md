@@ -10,6 +10,15 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 
 ### Added
 
+#### Connection
+
+- Reconnect action (`X` in the Object Browser, `Ctrl+Shift+X` in the SQL
+  Workspace). Closes the existing connection and SSH tunnel, re-establishes a
+  fresh MySQL session against the current profile, and reloads all metadata.
+- Same-endpoint reconnect preserves the SQL Workspace session (editor + log);
+  switching to a different profile endpoint rotates the session log and clears
+  the editor and results.
+
 #### Repository
 
 - Initial repository structure.

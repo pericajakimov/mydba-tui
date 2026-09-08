@@ -27,6 +27,7 @@ class MainWorkspaceScreen(Screen[None]):
         Binding("c", "open_profiles", "Connections", key_display="C"),
         Binding("w", "open_workspace", "SQL Workspace", key_display="W"),
         Binding("r", "refresh", "Refresh", key_display="R"),
+        Binding("x", "reconnect", "Reconnect", key_display="X"),
         Binding("f6", "switch_focus", "Switch Panel", key_display="F6"),
         Binding("f10", "quit", "Exit", key_display="F10"),
     ]
@@ -406,9 +407,7 @@ class MainWorkspaceScreen(Screen[None]):
         elif pane_id == "tab-params":
             self._render_params_tab()
         elif pane_id == "tab-sample":
-            self._update_sample_results(
-                "[dim]Click a button above to load sample data.[/dim]"
-            )
+            self._update_sample_results("[dim]Click a button above to load sample data.[/dim]")
         elif pane_id == "tab-ddl":
             self._render_ddl_tab()
 
@@ -619,8 +618,7 @@ class MainWorkspaceScreen(Screen[None]):
                 src_cols = ", ".join(e.column for e in entries)
                 ref_cols = ", ".join(e.referenced_column for e in entries)
                 lines.append(
-                    f"[cyan]{src_cols}[/cyan] → "
-                    f"[cyan]{first.referenced_table}[/cyan]({ref_cols})"
+                    f"[cyan]{src_cols}[/cyan] → [cyan]{first.referenced_table}[/cyan]({ref_cols})"
                 )
 
                 # DDL-style breakdown (dimmed)
@@ -628,12 +626,9 @@ class MainWorkspaceScreen(Screen[None]):
                 ref_cols_q = ", ".join(f"`{e.referenced_column}`" for e in entries)
                 lines.append(f"  [dim]CONSTRAINT `{cname}`[/dim]")
                 lines.append(f"    [dim]FOREIGN KEY ({fk_cols})[/dim]")
+                lines.append(f"    [dim]REFERENCES `{first.referenced_table}` ({ref_cols_q})[/dim]")
                 lines.append(
-                    f"    [dim]REFERENCES `{first.referenced_table}` ({ref_cols_q})[/dim]"
-                )
-                lines.append(
-                    f"    [dim]ON DELETE {first.delete_rule} "
-                    f"ON UPDATE {first.update_rule}[/dim]"
+                    f"    [dim]ON DELETE {first.delete_rule} ON UPDATE {first.update_rule}[/dim]"
                 )
                 lines.append("")
 
@@ -659,8 +654,7 @@ class MainWorkspaceScreen(Screen[None]):
                 src_cols = ", ".join(e.column for e in entries)
                 ref_cols = ", ".join(e.referenced_column for e in entries)
                 lines.append(
-                    f"[cyan]{first.source_table}[/cyan]({src_cols}) → "
-                    f"[cyan]{ref_cols}[/cyan]"
+                    f"[cyan]{first.source_table}[/cyan]({src_cols}) → [cyan]{ref_cols}[/cyan]"
                 )
 
                 # DDL-style breakdown (dimmed)
@@ -668,12 +662,9 @@ class MainWorkspaceScreen(Screen[None]):
                 ref_cols_q = ", ".join(f"`{e.referenced_column}`" for e in entries)
                 lines.append(f"  [dim]CONSTRAINT `{cname}`[/dim]")
                 lines.append(f"    [dim]FOREIGN KEY ({fk_cols})[/dim]")
+                lines.append(f"    [dim]REFERENCES `{table}` ({ref_cols_q})[/dim]")
                 lines.append(
-                    f"    [dim]REFERENCES `{table}` ({ref_cols_q})[/dim]"
-                )
-                lines.append(
-                    f"    [dim]ON DELETE {first.delete_rule} "
-                    f"ON UPDATE {first.update_rule}[/dim]"
+                    f"    [dim]ON DELETE {first.delete_rule} ON UPDATE {first.update_rule}[/dim]"
                 )
                 lines.append("")
 
@@ -700,9 +691,7 @@ class MainWorkspaceScreen(Screen[None]):
 
             for i, trg in enumerate(trigs):
                 if i > 0:
-                    pane.mount(Static(
-                        "[dim]─────────────────────────────────────────[/dim]\n"
-                    ))
+                    pane.mount(Static("[dim]─────────────────────────────────────────[/dim]\n"))
 
                 # Header with markup
                 header = (
@@ -799,12 +788,8 @@ class MainWorkspaceScreen(Screen[None]):
         level_w = 8  # "GLOBAL" is longest at 6 + padding
 
         # Header
-        lines.append(
-            f"[bold]{'User':<{user_w}}{'Level':<{level_w}}Privileges[/bold]"
-        )
-        lines.append(
-            f"{'─' * (user_w - 1)} {'─' * (level_w - 1)} {'─' * 40}"
-        )
+        lines.append(f"[bold]{'User':<{user_w}}{'Level':<{level_w}}Privileges[/bold]")
+        lines.append(f"{'─' * (user_w - 1)} {'─' * (level_w - 1)} {'─' * 40}")
 
         # Rows
         for g in grs:
@@ -866,8 +851,7 @@ class MainWorkspaceScreen(Screen[None]):
 
         if depends_on:
             lines.append(
-                f"[bold][yellow]{schema}[/yellow].[cyan]{table}[/cyan]"
-                f" depends on:[/bold]\n"
+                f"[bold][yellow]{schema}[/yellow].[cyan]{table}[/cyan] depends on:[/bold]\n"
             )
 
             # Group by type
@@ -891,10 +875,7 @@ class MainWorkspaceScreen(Screen[None]):
                 entries = sorted(fwd_by_type[type_label])
                 lines.append(f"  [bold]{type_label}[/bold] ({len(entries)})")
                 for dep_schema, dep_name, label in entries:
-                    line = (
-                        f"    [yellow]{dep_schema}[/yellow]"
-                        f".[cyan]{dep_name}[/cyan]"
-                    )
+                    line = f"    [yellow]{dep_schema}[/yellow].[cyan]{dep_name}[/cyan]"
                     if label:
                         line += f" [dim]({label})[/dim]"
                     lines.append(line)
@@ -931,10 +912,7 @@ class MainWorkspaceScreen(Screen[None]):
                 entries = sorted(rev_by_type[type_label])
                 lines.append(f"  [bold]{type_label}[/bold] ({len(entries)})")
                 for dep_schema, dep_name, label in entries:
-                    line = (
-                        f"    [yellow]{dep_schema}[/yellow]"
-                        f".[cyan]{dep_name}[/cyan]"
-                    )
+                    line = f"    [yellow]{dep_schema}[/yellow].[cyan]{dep_name}[/cyan]"
                     if label:
                         line += f" [dim]({label})[/dim]"
                     lines.append(line)
@@ -976,16 +954,18 @@ class MainWorkspaceScreen(Screen[None]):
             return
 
         # Get cached column metadata for smart SQL generation
-        columns = [
-            c for c in (self._table_columns or []) if isinstance(c, ColumnInfo)
-        ]
+        columns = [c for c in (self._table_columns or []) if isinstance(c, ColumnInfo)]
 
         order = "ASC" if event.button.id == "btn-sample-first" else "DESC"
 
         try:
             col_names, rows = get_sample_data(
-                conn_result.connection, schema, table, columns=columns,
-                order=order, limit=5,
+                conn_result.connection,
+                schema,
+                table,
+                columns=columns,
+                order=order,
+                limit=5,
             )
         except Exception as e:
             self._update_sample_results(f"[red]Error: {e}[/red]")
@@ -1100,9 +1080,7 @@ class MainWorkspaceScreen(Screen[None]):
         except Exception:
             pass
 
-    def _update_tab_with_body(
-        self, tab_id: str, metadata: str, body: str
-    ) -> None:
+    def _update_tab_with_body(self, tab_id: str, metadata: str, body: str) -> None:
         """Update a tab with metadata (Rich markup) + SQL body (highlighted)."""
         from mydba_tui.ui.mysql_highlight import highlight_mysql
 
@@ -1141,6 +1119,17 @@ class MainWorkspaceScreen(Screen[None]):
     def action_open_workspace(self) -> None:
         """Navigate to SQL Workspace."""
         self.app.push_screen("workspace")
+
+    def action_reconnect(self) -> None:
+        """Reconnect to the current profile and reload the browser."""
+        self.app.reconnect()  # type: ignore[attr-defined]
+
+    def reload_after_reconnect(self) -> None:
+        """Fully reload the object browser after a reconnect."""
+        self._sync_status_bar()
+        self._load_schemas()
+        self._reset_content_panel()
+        self._build_dependency_graph()
 
     def action_refresh(self) -> None:
         """Rebuild the dependency graph without collapsing the object tree."""
@@ -1210,9 +1199,7 @@ class MainWorkspaceScreen(Screen[None]):
         lines.append(f"     [dim]Collation:[/dim] {info.collation}")
 
         if info.definition:
-            self._update_tab_with_body(
-                "tab-general", "\n".join(lines), info.definition
-            )
+            self._update_tab_with_body("tab-general", "\n".join(lines), info.definition)
         else:
             self._update_tab("tab-general", "\n".join(lines))
 
@@ -1228,9 +1215,7 @@ class MainWorkspaceScreen(Screen[None]):
             return
 
         try:
-            self._table_info = get_routine_info(
-                conn_result.connection, schema, name, routine_type
-            )
+            self._table_info = get_routine_info(conn_result.connection, schema, name, routine_type)
             self._table_columns = get_routine_params(
                 conn_result.connection, schema, name, routine_type
             )
@@ -1268,9 +1253,7 @@ class MainWorkspaceScreen(Screen[None]):
             lines.append(f"       [dim]Comment:[/dim] {info.comment}")
 
         if info.definition:
-            self._update_tab_with_body(
-                "tab-general", "\n".join(lines), info.definition
-            )
+            self._update_tab_with_body("tab-general", "\n".join(lines), info.definition)
         else:
             self._update_tab("tab-general", "\n".join(lines))
 
@@ -1303,17 +1286,12 @@ class MainWorkspaceScreen(Screen[None]):
         type_w = max(max_type + 2, 15)
 
         lines: list[str] = []
-        lines.append(
-            f"[bold]{'#':<4}{'Mode':<8}{'Name':<{name_w}}{'Type':<{type_w}}[/bold]"
-        )
+        lines.append(f"[bold]{'#':<4}{'Mode':<8}{'Name':<{name_w}}{'Type':<{type_w}}[/bold]")
         lines.append(f"{'─' * 3} {'─' * 6} {'─' * (name_w - 1)} {'─' * (type_w - 1)}")
 
         for p in prms:
             mode = p.mode or ""
-            lines.append(
-                f"{p.ordinal:<4}{mode:<8}{p.name:<{name_w}}"
-                f"[dim]{p.data_type}[/dim]"
-            )
+            lines.append(f"{p.ordinal:<4}{mode:<8}{p.name:<{name_w}}[dim]{p.data_type}[/dim]")
 
         self._update_tab("tab-params", "\n".join(lines))
 
@@ -1352,9 +1330,7 @@ class MainWorkspaceScreen(Screen[None]):
         lines: list[str] = []
         lines.append(f"         [dim]Event:[/dim] {info.event}")
         lines.append(f"        [dim]Timing:[/dim] {info.timing}")
-        lines.append(
-            f"         [dim]Table:[/dim] {info.table_schema}.{info.table_name}"
-        )
+        lines.append(f"         [dim]Table:[/dim] {info.table_schema}.{info.table_name}")
         lines.append(f"  [dim]Action Order:[/dim] {info.action_order}")
         lines.append(f"       [dim]Definer:[/dim] {info.definer}")
         lines.append(f"       [dim]Created:[/dim] {info.created}")
@@ -1416,9 +1392,7 @@ class MainWorkspaceScreen(Screen[None]):
             lines.append(f"       [dim]Comment:[/dim] {info.comment}")
 
         if info.definition:
-            self._update_tab_with_body(
-                "tab-general", "\n".join(lines), info.definition
-            )
+            self._update_tab_with_body("tab-general", "\n".join(lines), info.definition)
         else:
             self._update_tab("tab-general", "\n".join(lines))
 

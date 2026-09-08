@@ -22,9 +22,7 @@ class TsvExporter(Exporter):
 
     def _write_header(self) -> None:
         assert self._file is not None
-        self._writer = csv.writer(
-            self._file, delimiter="\t", quoting=csv.QUOTE_MINIMAL
-        )
+        self._writer = csv.writer(self._file, delimiter="\t", quoting=csv.QUOTE_MINIMAL)
         self._writer.writerow(self._col_names)
 
     def write_row(self, row: tuple[Any, ...] | list[Any]) -> None:

@@ -1,7 +1,9 @@
-.PHONY: help install install-dev test lint format typecheck clean build run
+.PHONY: help install install-dev test lint format typecheck clean build run all
 
 
-PYTHON ?= python3
+# Prefer the project virtualenv interpreter if it exists, so targets work
+# without needing the venv to be activated. Override with `make PYTHON=...`.
+PYTHON ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 PIP ?= $(PYTHON) -m pip
 
 
@@ -17,6 +19,7 @@ help:
 	@echo "  typecheck     Run mypy checks"
 	@echo "  build         Build package"
 	@echo "  clean         Remove generated files"
+	@echo "  all           Format, lint, typecheck, test, then run the app"
 
 
 install:
@@ -27,25 +30,28 @@ install-dev:
 	$(PIP) install -e ".[dev]"
 
 
+all: format lint typecheck test run
+
+
 run:
 	$(PYTHON) -m mydba_tui
 
 
 test:
-	pytest
+	$(PYTHON) -m pytest
 
 
 lint:
-	ruff check .
+	$(PYTHON) -m ruff check .
 
 
 format:
-	ruff format .
-	ruff check --fix .
+	$(PYTHON) -m ruff format .
+	$(PYTHON) -m ruff check --fix .
 
 
 typecheck:
-	mypy src
+	$(PYTHON) -m mypy src
 
 
 build:

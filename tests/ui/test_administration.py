@@ -5,6 +5,7 @@ from mydba_tui.ui.screens.administration import (
     AdministrationScreen,
     ConnectionsView,
     LocksView,
+    MetadataLocksView,
     ProcessListView,
     StatusView,
     TransactionsView,
@@ -363,3 +364,54 @@ def test_locks_row_key_pairs_waiting_and_blocking() -> None:
     view = LocksView()
     key = view._row_key(_lock(waiting_pid=101, blocking_pid=202))
     assert key == "101\x00202"
+
+
+def _mdl(**overrides: object):
+    from mydba_tui.services.metadata_locks import MetadataLockWait
+
+    base: dict[str, object] = {
+        "wait_age_secs": 20,
+        "object_schema": "shop",
+        "object_name": "orders",
+        "waiting_pid": 101,
+        "waiting_account": "app@10.0.0.1",
+        "waiting_lock_type": "EXCLUSIVE",
+        "waiting_query": "ALTER TABLE orders ADD COLUMN x INT",
+        "blocking_pid": 202,
+        "blocking_account": "reporting@10.0.0.2",
+        "blocking_lock_type": "SHARED_READ",
+    }
+    base.update(overrides)
+    return MetadataLockWait(**base)  # type: ignore[arg-type]
+
+
+def test_metadata_locks_view_bindings_present() -> None:
+    """The Metadata Locks view exposes refresh, pause, filter, kill-blocker."""
+    keys = _all_binding_keys(MetadataLocksView)
+    for key in ("r", "p", "slash", "k"):
+        assert key in keys, f"missing binding {key}"
+
+
+def test_metadata_locks_filter_matches_account_object_query() -> None:
+    """The filter matches account, object, and query."""
+    view = MetadataLocksView()
+    view._items = [
+        _mdl(waiting_pid=1, blocking_account="reporting@h"),
+        _mdl(waiting_pid=2, object_name="invoices", blocking_account="etl@h"),
+    ]
+
+    view._filter = "reporting"
+    assert [m.waiting_pid for m in view._visible_items()] == [1]  # type: ignore[attr-defined]
+
+    view._filter = "invoices"
+    assert [m.waiting_pid for m in view._visible_items()] == [2]  # type: ignore[attr-defined]
+
+    view._filter = ""
+    assert len(view._visible_items()) == 2
+
+
+def test_metadata_locks_row_key_includes_object() -> None:
+    """The row key combines waiting/blocking pids and the object."""
+    view = MetadataLocksView()
+    key = view._row_key(_mdl(waiting_pid=1, blocking_pid=2, object_schema="s", object_name="t"))
+    assert key == "1\x002\x00s.t"

@@ -149,3 +149,55 @@ def styled_cell(val: Any) -> Text:
     t = Text(s)
     t.stylize(style)
     return t
+
+
+# --- Lock mode / type explanations ---
+
+# InnoDB row-lock mode components (from performance_schema data_locks /
+# sys.innodb_lock_waits). A mode is a comma-separated combination, e.g.
+# "X,REC_NOT_GAP" or "S,GAP".
+_INNODB_LOCK_COMPONENTS = {
+    "X": "Exclusive",
+    "S": "Shared",
+    "IX": "Intention Exclusive",
+    "IS": "Intention Shared",
+    "GAP": "gap lock",
+    "REC_NOT_GAP": "record only (no gap)",
+    "INSERT_INTENTION": "insert intention",
+    "AUTO_INC": "auto-increment",
+    "UNKNOWN": "unknown",
+}
+
+# Metadata (table) lock types from the MDL subsystem.
+_MDL_LOCK_TYPES = {
+    "INTENTION_EXCLUSIVE": "Intention Exclusive",
+    "SHARED": "Shared",
+    "SHARED_HIGH_PRIO": "Shared (high priority)",
+    "SHARED_READ": "Shared Read",
+    "SHARED_WRITE": "Shared Write",
+    "SHARED_UPGRADABLE": "Shared Upgradable",
+    "SHARED_NO_WRITE": "Shared, No Write",
+    "SHARED_NO_READ_WRITE": "Shared, No Read/Write",
+    "EXCLUSIVE": "Exclusive",
+}
+
+
+def explain_lock_mode(mode: str) -> str:
+    """Return a human-readable explanation of a lock mode/type, or "" if empty.
+
+    Handles InnoDB row-lock modes (comma-separated components such as
+    "X,REC_NOT_GAP") and MDL lock types (single words such as "SHARED_READ").
+    Unknown tokens are passed through unchanged so nothing is hidden.
+    """
+    mode = (mode or "").strip()
+    if not mode:
+        return ""
+
+    # MDL single-word type.
+    if mode in _MDL_LOCK_TYPES:
+        return _MDL_LOCK_TYPES[mode]
+
+    # InnoDB comma-separated components.
+    parts = [p.strip() for p in mode.split(",") if p.strip()]
+    explained = [_INNODB_LOCK_COMPONENTS.get(p, p) for p in parts]
+    return ", ".join(explained)

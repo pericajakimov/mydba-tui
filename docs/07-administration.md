@@ -210,26 +210,29 @@ This section belongs to operational information rather than configuration.
 
 ---
 
-# Locks
+# InnoDB Locks
 
-The Locks section surfaces InnoDB row-lock contention — which session is
+The InnoDB Locks section surfaces InnoDB row-lock contention — which session is
 blocked and which session is blocking it — sourced from the sys schema
 (`sys.innodb_lock_waits`), enriched with user/host from the process list. It is
 a live Administration tab, placed after Transactions.
 
-Columns: Wait Age, Locked Table, Waiting PID, Waiting User, Waiting Query,
-Blocking PID, Blocking User, Blocking Query. Rows are sorted with the
-longest-waiting first.
+Columns: Wait Age, Locked Table, Waiting PID, Waiting User, Waiting Mode,
+Waiting Query, Blocking PID, Blocking User, Blocking Mode, Blocking Query. Rows
+are sorted with the longest-waiting first. The lock mode is shown as InnoDB's
+short code in the table (e.g. `X`, `X,GAP`).
 
 Like the other live views, it auto-refreshes (pausable with `p`, manual with
-`r`) and supports filtering (`/`, matching users, table, and queries).
+`r`) and supports filtering (`/`, matching users, table, lock modes, and
+queries).
 
 Actions:
 
 - `Enter` opens a detail view showing the waiting and blocking sessions in
-  full, with their queries highlighted. A blocking session that has gone idle
-  reports no current query (a known InnoDB limitation), so the detail view also
-  shows the blocking session's recent statement history from
+  full, with their queries highlighted and their lock modes explained (e.g.
+  `X,REC_NOT_GAP (Exclusive, record only (no gap))`). A blocking session that
+  has gone idle reports no current query (a known InnoDB limitation), so the
+  detail view also shows the blocking session's recent statement history from
   performance_schema — revealing what it ran to acquire the lock.
 - `k` kills the blocking connection to release the wait (with confirmation and
   a guard against killing the tool's own session).
@@ -309,9 +312,32 @@ applications and users.
 
 # Metadata Locks
 
-The Metadata Locks section presents metadata lock information using the most useful views available from the `sys` schema.
+The Metadata Locks section surfaces table metadata-lock (MDL) contention — the
+classic "Waiting for table metadata lock" case, e.g. an `ALTER TABLE` blocked
+by an open transaction that still holds a shared lock on the table. It is
+sourced from the sys schema (`sys.schema_table_lock_waits`) and placed after the
+InnoDB Locks tab.
 
-The presentation should emphasize blocked objects and blocking sessions.
+Columns: Wait Age, Object, Waiting PID, Waiting Account, Waiting Lock, Waiting
+Query, Blocking PID, Blocking Account, Blocking Lock. Rows are sorted
+longest-waiting first.
+
+Like the other live views it auto-refreshes (pausable with `p`, manual with
+`r`) and supports filtering (`/`, matching accounts, object, lock types, and
+queries).
+
+Actions:
+
+- `Enter` opens a detail view with the waiting and blocking sessions, the lock
+  types explained in full (e.g. `EXCLUSIVE (Exclusive)`), and — because the MDL
+  view carries no blocking query — the blocking session's recent statement
+  history from performance_schema (which reveals what it ran to hold the lock).
+- `k` kills the blocking connection to release the wait (with confirmation and
+  a guard against killing the tool's own session).
+
+The section relies on the sys schema; where it is unavailable (e.g. MariaDB or
+an uninstalled sys schema) the list is empty. The healthy default is empty
+(nothing blocked).
 
 ---
 

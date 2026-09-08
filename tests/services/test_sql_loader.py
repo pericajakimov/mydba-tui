@@ -195,6 +195,7 @@ _EXTRACTED_SQL_FILES = [
     "admin/transactions.sql",
     "admin/statement_history.sql",
     "admin/lock_waits.sql",
+    "admin/metadata_lock_waits.sql",
     "browser/dep_views.sql",
     "browser/dep_procedures.sql",
     "browser/dep_functions.sql",

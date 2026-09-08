@@ -21,6 +21,11 @@ from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedCont
 
 from mydba_tui.services.connections import ConnectionStat, fetch_connection_stats
 from mydba_tui.services.locks import LOCK_COLUMNS, LockWait, fetch_lock_waits
+from mydba_tui.services.metadata_locks import (
+    MDL_COLUMNS,
+    MetadataLockWait,
+    fetch_metadata_lock_waits,
+)
 from mydba_tui.services.processlist import (
     PROCESS_COLUMNS,
     ProcessRow,
@@ -57,6 +62,17 @@ def _meta_value(val: object) -> str:
     return s if s.strip() else "None"
 
 
+def _explain_mode(mode: str) -> str:
+    """Format a lock mode/type as 'CODE (Explanation)' for the detail view."""
+    from mydba_tui.renderers.table import explain_lock_mode
+
+    code = (mode or "").strip()
+    if not code:
+        return "None"
+    explanation = explain_lock_mode(code)
+    return f"{code} ({explanation})" if explanation and explanation != code else code
+
+
 def _format_seconds(seconds: int) -> str:
     """Format a whole-second duration in human-readable form.
 
@@ -77,6 +93,42 @@ def _format_seconds(seconds: int) -> str:
 def _format_time_field(seconds: int) -> str:
     """Render the Time field as raw seconds plus a human-readable form."""
     return f"{seconds} ({_format_seconds(seconds)})"
+
+
+def _render_statement_history(history: list[StatementHistoryEntry] | None) -> Static:
+    """Render statement history as an aligned table inside a Static widget.
+
+    Used by the detail modals (Transactions, InnoDB Locks, Metadata Locks) so
+    a session's recent statements are shown consistently. A Rich table is used
+    (rather than a DataTable widget) so it can be built directly in compose.
+
+    Args:
+        history: The statements (most recent first), an empty list, or None
+            when statement history is unavailable/not connected.
+
+    Returns:
+        A Static widget containing the rendered history or an explanatory note.
+    """
+    from rich.table import Table
+
+    from mydba_tui.ui.mysql_highlight import highlight_mysql
+
+    if history is None:
+        return Static(
+            "[dim]Unavailable — requires performance_schema statement history.[/dim]",
+            classes="detail-sql",
+        )
+    if not history:
+        return Static("[dim]No recent statements.[/dim]", classes="detail-sql")
+
+    table: Table = Table(expand=True, show_edge=False, pad_edge=False)
+    table.add_column("#", justify="right", style="dim", no_wrap=True)
+    table.add_column("Duration", justify="right", style="dim", no_wrap=True)
+    table.add_column("Statement", ratio=1)
+    for i, entry in enumerate(history, 1):
+        duration = f"{entry.duration_ms:.1f} ms" if entry.duration_ms else "—"
+        table.add_row(str(i), duration, highlight_mysql(entry.sql))
+    return Static(table, classes="detail-sql")
 
 
 def _view_is_active_tab(widget: object) -> bool:
@@ -818,9 +870,11 @@ class LocksView(LiveTableView):
             styled_cell(table),
             styled_cell(lw.waiting_pid),
             styled_cell(lw.waiting_user),
+            styled_cell(lw.waiting_lock_mode),
             Text(waiting),
             styled_cell(lw.blocking_pid),
             styled_cell(lw.blocking_user),
+            styled_cell(lw.blocking_lock_mode),
             Text(blocking),
         ]
 
@@ -835,9 +889,11 @@ class LocksView(LiveTableView):
             for v in (
                 lw.waiting_pid,
                 lw.waiting_user,
+                lw.waiting_lock_mode,
                 lw.waiting_query,
                 lw.blocking_pid,
                 lw.blocking_user,
+                lw.blocking_lock_mode,
                 lw.blocking_query,
                 lw.locked_schema,
                 lw.locked_table,
@@ -882,6 +938,125 @@ class LocksView(LiveTableView):
         def on_confirm(confirmed: bool | None) -> None:
             if confirmed:
                 self._run_kill(lw.blocking_pid)
+
+        self.app.push_screen(ConfirmDialog(message), callback=on_confirm)
+
+    def _run_kill(self, conn_id: int) -> None:
+        """Kill the connection on the UI thread, then refresh."""
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            self._show_message("[yellow]Not connected to a database.[/yellow]")
+            return
+
+        try:
+            kill_session(conn_result.connection, conn_id, query_only=False)
+        except Exception as e:
+            self.notify(f"Kill failed: {e}", severity="error")
+            return
+
+        self.notify(f"Killed blocking connection {conn_id}.")
+        self.action_refresh()
+
+
+class MetadataLocksView(LiveTableView):
+    """Metadata Locks section — table MDL waits (who is blocked by whom)."""
+
+    BINDINGS = [
+        Binding("k", "kill_blocker", "Kill Blocker", key_display="K"),
+    ]
+
+    id_prefix = "mdl"
+    columns = tuple(MDL_COLUMNS)
+    filter_placeholder = "Filter (account, object, query) — Enter to keep, Esc to clear"
+    noun = "metadata lock waits"
+
+    _QUERY_TRUNCATE = 60
+
+    def _fetch(self) -> list[object]:
+        conn_result = self.app.db_connection  # type: ignore[attr-defined]
+        return list(fetch_metadata_lock_waits(conn_result.connection))
+
+    def _row_key(self, item: object) -> str:
+        m: MetadataLockWait = item  # type: ignore[assignment]
+        return f"{m.waiting_pid}\x00{m.blocking_pid}\x00{m.object_schema}.{m.object_name}"
+
+    def _row_cells(self, item: object) -> list[Text]:
+        from mydba_tui.renderers.table import styled_cell
+
+        m: MetadataLockWait = item  # type: ignore[assignment]
+        obj = f"{m.object_schema}.{m.object_name}".strip(".")
+        query = m.waiting_query or ""
+        if len(query) > self._QUERY_TRUNCATE:
+            query = query[: self._QUERY_TRUNCATE] + "…"
+        return [
+            styled_cell(_format_seconds(m.wait_age_secs)),
+            styled_cell(obj),
+            styled_cell(m.waiting_pid),
+            styled_cell(m.waiting_account),
+            styled_cell(m.waiting_lock_type),
+            Text(query),
+            styled_cell(m.blocking_pid),
+            styled_cell(m.blocking_account),
+            styled_cell(m.blocking_lock_type),
+        ]
+
+    def _matches(self, item: object, needle: str) -> bool:
+        m: MetadataLockWait = item  # type: ignore[assignment]
+        haystack = " ".join(
+            str(v)
+            for v in (
+                m.waiting_pid,
+                m.waiting_account,
+                m.waiting_lock_type,
+                m.waiting_query,
+                m.blocking_pid,
+                m.blocking_account,
+                m.blocking_lock_type,
+                m.object_schema,
+                m.object_name,
+            )
+        ).lower()
+        return needle in haystack
+
+    def _selected_mdl(self) -> MetadataLockWait | None:
+        item = self._selected_item()
+        return item  # type: ignore[return-value]
+
+    # --- Actions ---
+
+    def action_show_detail(self) -> None:
+        """Show the full detail of the selected metadata-lock wait."""
+        m = self._selected_mdl()
+        if m is None:
+            self.notify("No metadata lock wait selected.", severity="warning")
+            return
+        self.app.push_screen(_MetadataLockDetailScreen(m))
+
+    def action_kill_blocker(self) -> None:
+        """Kill the blocking connection to release the selected MDL wait."""
+        m = self._selected_mdl()
+        if m is None:
+            self.notify("No metadata lock wait selected.", severity="warning")
+            return
+        if m.blocking_pid == 0:
+            self.notify("No blocking connection id.", severity="warning")
+            return
+
+        own_id = getattr(getattr(self.app, "server_info", None), "connection_id", 0)
+        if own_id and m.blocking_pid == own_id:
+            self.notify("Refusing to kill your own session.", severity="warning")
+            return
+
+        message = (
+            f"Kill blocking connection {m.blocking_pid} "
+            f"({m.blocking_account}) to release waiting session {m.waiting_pid}?"
+        )
+
+        def on_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                self._run_kill(m.blocking_pid)
 
         self.app.push_screen(ConfirmDialog(message), callback=on_confirm)
 
@@ -1307,20 +1482,7 @@ class _TransactionDetailScreen(ModalScreen[None]):
                 yield Static("[dim]None (idle in transaction).[/dim]", classes="detail-sql")
 
             yield Static("[bold]Statement history[/bold]", classes="detail-section")
-            history = self._load_history()
-            if history is None:
-                yield Static(
-                    "[dim]Unavailable — requires performance_schema statement history.[/dim]",
-                    classes="detail-sql",
-                )
-            elif not history:
-                yield Static("[dim]No recent statements.[/dim]", classes="detail-sql")
-            else:
-                for i, entry in enumerate(history, 1):
-                    ms = f"{entry.duration_ms:.1f} ms" if entry.duration_ms else ""
-                    label = f"[dim]{i}.[/dim] [dim]{ms}[/dim]" if ms else f"[dim]{i}.[/dim]"
-                    yield Static(label, classes="detail-hist-label")
-                    yield Static(highlight_mysql(entry.sql), classes="detail-sql")
+            yield _render_statement_history(self._load_history())
 
     def _load_history(self) -> list[StatementHistoryEntry] | None:
         """Load statement history for the transaction's connection.
@@ -1413,7 +1575,7 @@ class _LockDetailScreen(ModalScreen[None]):
             yield Static(
                 f"[bold]Waiting[/bold] — session {lw.waiting_pid} "
                 f"(user {_meta_value(lw.waiting_user)}, "
-                f"mode {_meta_value(lw.waiting_lock_mode)})",
+                f"mode {_explain_mode(lw.waiting_lock_mode)})",
                 classes="detail-section",
             )
             waiting = (lw.waiting_query or "").strip()
@@ -1425,7 +1587,7 @@ class _LockDetailScreen(ModalScreen[None]):
             yield Static(
                 f"[bold]Blocking[/bold] — session {lw.blocking_pid} "
                 f"(user {_meta_value(lw.blocking_user)}, "
-                f"mode {_meta_value(lw.blocking_lock_mode)})",
+                f"mode {_explain_mode(lw.blocking_lock_mode)})",
                 classes="detail-section",
             )
             blocking = (lw.blocking_query or "").strip()
@@ -1442,20 +1604,7 @@ class _LockDetailScreen(ModalScreen[None]):
                 "[bold]Blocking session statement history[/bold]",
                 classes="detail-section",
             )
-            history = self._load_blocking_history()
-            if history is None:
-                yield Static(
-                    "[dim]Unavailable — requires performance_schema statement history.[/dim]",
-                    classes="detail-sql",
-                )
-            elif not history:
-                yield Static("[dim]No recent statements.[/dim]", classes="detail-sql")
-            else:
-                for i, entry in enumerate(history, 1):
-                    ms = f"{entry.duration_ms:.1f} ms" if entry.duration_ms else ""
-                    label = f"[dim]{i}.[/dim] [dim]{ms}[/dim]" if ms else f"[dim]{i}.[/dim]"
-                    yield Static(label, classes="detail-hist-label")
-                    yield Static(highlight_mysql(entry.sql), classes="detail-sql")
+            yield _render_statement_history(self._load_blocking_history())
 
     def _load_blocking_history(self) -> list[StatementHistoryEntry] | None:
         """Load statement history for the blocking session.
@@ -1469,6 +1618,115 @@ class _LockDetailScreen(ModalScreen[None]):
         if conn_result is None or not isinstance(conn_result, ConnectionResult):
             return None
         return fetch_statement_history(conn_result.connection, self._lock.blocking_pid)
+
+    def action_close(self) -> None:
+        """Dismiss the modal."""
+        self.dismiss(None)
+
+
+class _MetadataLockDetailScreen(ModalScreen[None]):
+    """Modal showing a metadata-lock wait: waiting/blocking sessions in full."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", key_display="Esc"),
+    ]
+
+    CSS = """
+    _MetadataLockDetailScreen {
+        align: center middle;
+        background: $background 80%;
+    }
+
+    #detail-container {
+        width: 80%;
+        max-width: 120;
+        height: auto;
+        max-height: 80%;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+
+    #detail-title {
+        text-style: bold;
+        padding-bottom: 1;
+    }
+
+    .detail-section {
+        text-style: bold;
+        color: $accent;
+        padding-top: 1;
+    }
+
+    .detail-sql {
+        height: auto;
+        padding: 0 0 1 1;
+    }
+
+    #detail-meta {
+        height: auto;
+        padding-bottom: 1;
+    }
+    """
+
+    def __init__(self, mdl: MetadataLockWait) -> None:
+        """Initialize with the metadata-lock wait whose detail is shown."""
+        super().__init__()
+        self._mdl = mdl
+
+    def compose(self) -> ComposeResult:
+        """Build the metadata-lock detail modal."""
+        from mydba_tui.ui.mysql_highlight import highlight_mysql
+
+        m = self._mdl
+        obj = f"{m.object_schema}.{m.object_name}".strip(".")
+        meta = [
+            f"[bold]Object:[/bold] {_meta_value(obj)}",
+            f"[bold]Wait age:[/bold] {_format_time_field(m.wait_age_secs)}",
+        ]
+        with VerticalScroll(id="detail-container"):
+            yield Static("Metadata lock wait", id="detail-title")
+            yield Static("\n".join(meta), id="detail-meta")
+
+            yield Static(
+                f"[bold]Waiting[/bold] — session {m.waiting_pid} "
+                f"({_meta_value(m.waiting_account)}, "
+                f"lock {_explain_mode(m.waiting_lock_type)})",
+                classes="detail-section",
+            )
+            waiting = (m.waiting_query or "").strip()
+            yield Static(
+                highlight_mysql(waiting) if waiting else "[dim]None.[/dim]",
+                classes="detail-sql",
+            )
+
+            yield Static(
+                f"[bold]Blocking[/bold] — session {m.blocking_pid} "
+                f"({_meta_value(m.blocking_account)}, "
+                f"lock {_explain_mode(m.blocking_lock_type)})",
+                classes="detail-section",
+            )
+
+            # The MDL view has no blocking query; statement history is the way
+            # to see what the (usually idle) blocker did to hold the lock.
+            yield Static(
+                "[bold]Blocking session statement history[/bold]",
+                classes="detail-section",
+            )
+            yield _render_statement_history(self._load_blocking_history())
+
+    def _load_blocking_history(self) -> list[StatementHistoryEntry] | None:
+        """Load statement history for the blocking session.
+
+        Returns None if not connected (so the modal shows an 'unavailable'
+        note), otherwise the (possibly empty) list of recent statements.
+        """
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return None
+        return fetch_statement_history(conn_result.connection, self._mdl.blocking_pid)
 
     def action_close(self) -> None:
         """Dismiss the modal."""
@@ -1554,8 +1812,10 @@ class AdministrationScreen(Screen[None]):
                 yield ConnectionsView()
             with TabPane("Transactions", id="tab-transactions"):
                 yield TransactionsView()
-            with TabPane("Locks", id="tab-locks"):
+            with TabPane("InnoDB Locks", id="tab-locks"):
                 yield LocksView()
+            with TabPane("Metadata Locks", id="tab-metadata-locks"):
+                yield MetadataLocksView()
             with TabPane("Variables", id="tab-variables"):
                 yield VariablesView()
             with TabPane("Status", id="tab-status"):

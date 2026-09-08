@@ -27,9 +27,11 @@ LOCK_COLUMNS = [
     "Locked Table",
     "Waiting PID",
     "Waiting User",
+    "Waiting Mode",
     "Waiting Query",
     "Blocking PID",
     "Blocking User",
+    "Blocking Mode",
     "Blocking Query",
 ]
 

@@ -36,6 +36,12 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
   detail view including the blocking session's statement history.
 - Session statement history is presented as a compact table (index, duration,
   statement) in the Transactions, InnoDB Locks, and Metadata Locks detail views.
+- Users tab (after Metadata Locks): MySQL accounts with a logical group derived
+  entirely in SQL (System/Admin/Personal/Application/Monitoring/Replication/
+  Read-Only/Special Purpose), colour-coded group names, filtering, and grants
+  shown on demand via a detail view. Manual refresh (no auto-refresh).
+- LiveTableView gained an auto_refresh flag so non-live views (Users) reuse the
+  table/filter/detail machinery without the refresh timer.
 - Shared LiveTableView base underlying the Process List, Connections, and
   Transactions views (auto-refresh, pause, filter, cursor preservation).
 - Administration tabs only query the server while visible; background tabs no

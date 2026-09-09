@@ -40,6 +40,7 @@ from mydba_tui.services.transactions import (
     fetch_statement_history,
     fetch_transactions,
 )
+from mydba_tui.services.users import USER_COLUMNS, UserAccount, fetch_users
 from mydba_tui.services.variables import fetch_variables
 from mydba_tui.ui.screens.workspace import WorkspaceScreen
 from mydba_tui.ui.widgets import ConfirmDialog, StatusBar
@@ -237,7 +238,7 @@ class LiveTableView(Vertical):
 
     LiveTableView .live-filter {
         display: none;
-        dock: bottom;
+        height: auto;
         border: tall $accent;
     }
 
@@ -251,6 +252,10 @@ class LiveTableView(Vertical):
     columns: tuple[str, ...] = ()
     filter_placeholder: str = "Filter — Enter to keep, Esc to clear"
     noun: str = "rows"
+    # When False, the view loads once and does not auto-refresh on a timer
+    # (still supports manual refresh with `r` and filtering). Used by
+    # non-live sections such as Users.
+    auto_refresh: bool = True
 
     # --- Data hooks (subclasses implement) ---
     def _fetch(self) -> list[object]:
@@ -310,19 +315,24 @@ class LiveTableView(Vertical):
         yield Input(placeholder=self.filter_placeholder, id=self._filter_id, classes="live-filter")
 
     def on_mount(self) -> None:
-        """Set up the table columns and start auto-refresh."""
+        """Set up the table columns and (for live views) start auto-refresh."""
         table = self.query_one(f"#{self._table_id}", DataTable)
         for col in self.columns:
             table.add_column(col, key=col)
 
         self.action_refresh()
 
-        interval = getattr(getattr(self.app, "settings", None), "refresh_interval", 3)
-        interval = max(1, int(interval))
-        self._refresh_timer = self.set_interval(interval, self._on_refresh_tick)
+        if self.auto_refresh:
+            interval = getattr(getattr(self.app, "settings", None), "refresh_interval", 3)
+            interval = max(1, int(interval))
+            self._refresh_timer = self.set_interval(interval, self._on_refresh_tick)
 
     def refresh_data(self) -> None:
         """Public hook to reload data (called when the tab is shown)."""
+        # Non-live views load once; re-querying on every tab activation would
+        # be wasteful (and Users runs a heavier grouping query).
+        if not self.auto_refresh and self._items:
+            return
         self.action_refresh()
 
     # --- Data loading ---
@@ -428,7 +438,9 @@ class LiveTableView(Vertical):
     # --- View controls ---
 
     def action_toggle_pause(self) -> None:
-        """Toggle auto-refresh."""
+        """Toggle auto-refresh (no-op for non-live views)."""
+        if not self.auto_refresh:
+            return
         self._paused = not self._paused
         self._render_table(self._items)
         self.notify("Auto-refresh paused." if self._paused else "Auto-refresh resumed.")
@@ -1079,6 +1091,95 @@ class MetadataLocksView(LiveTableView):
         self.action_refresh()
 
 
+class UsersView(LiveTableView):
+    """Users section — accounts grouped by role, with grants on demand."""
+
+    id_prefix = "users"
+    columns = tuple(USER_COLUMNS)
+    filter_placeholder = "Filter (group, user, host) — Enter to keep, Esc to clear"
+    noun = "accounts"
+    auto_refresh = False  # accounts change rarely; manual refresh only
+
+    # Palette for auto-assigning group colours when the SQL leaves group_color
+    # empty. Chosen to be readable and to avoid the red/green used elsewhere
+    # for errors/success. Cycled per distinct group in first-seen order.
+    _GROUP_PALETTE = (
+        "cyan",
+        "magenta",
+        "yellow",
+        "dodger_blue1",
+        "orange1",
+        "spring_green2",
+        "hot_pink",
+        "gold1",
+        "turquoise2",
+        "purple",
+    )
+
+    def _fetch(self) -> list[object]:
+        conn_result = self.app.db_connection  # type: ignore[attr-defined]
+        return list(fetch_users(conn_result.connection))
+
+    def _row_key(self, item: object) -> str:
+        acc: UserAccount = item  # type: ignore[assignment]
+        return f"{acc.user}\x00{acc.host}"
+
+    def _group_colors(self) -> dict[str, str]:
+        """Map each distinct group to a colour.
+
+        Uses the SQL-provided colour when present; otherwise auto-assigns from
+        the palette in first-seen (i.e. display) order so colours are stable
+        within a refresh and distinct across groups.
+        """
+        colors: dict[str, str] = {}
+        palette_idx = 0
+        for it in self._items:
+            acc: UserAccount = it  # type: ignore[assignment]
+            if acc.group in colors:
+                continue
+            if acc.group_color.strip():
+                colors[acc.group] = acc.group_color.strip()
+            else:
+                colors[acc.group] = self._GROUP_PALETTE[palette_idx % len(self._GROUP_PALETTE)]
+                palette_idx += 1
+        return colors
+
+    def _row_cells(self, item: object) -> list[Text]:
+        from mydba_tui.renderers.table import styled_cell
+
+        acc: UserAccount = item  # type: ignore[assignment]
+        group_color = self._group_colors().get(acc.group, "")
+        group_cell = Text(acc.group, style=group_color) if group_color else Text(acc.group)
+        locked = "yes" if acc.locked else ""
+        expired = "yes" if acc.password_expired else ""
+        return [
+            group_cell,
+            styled_cell(acc.user),
+            styled_cell(acc.host),
+            Text(locked, style="red" if acc.locked else "dim"),
+            Text(expired, style="yellow" if acc.password_expired else "dim"),
+            styled_cell(acc.password_last_changed),
+            styled_cell(acc.plugin),
+        ]
+
+    def _matches(self, item: object, needle: str) -> bool:
+        acc: UserAccount = item  # type: ignore[assignment]
+        haystack = " ".join(str(v) for v in (acc.group, acc.user, acc.host, acc.plugin)).lower()
+        return needle in haystack
+
+    def _selected_account(self) -> UserAccount | None:
+        item = self._selected_item()
+        return item  # type: ignore[return-value]
+
+    def action_show_detail(self) -> None:
+        """Show account summary plus its grants (fetched on demand)."""
+        acc = self._selected_account()
+        if acc is None:
+            self.notify("No account selected.", severity="warning")
+            return
+        self.app.push_screen(_UserDetailScreen(acc))
+
+
 class KeyValueView(Vertical):
     """Base for a filterable, refreshable key/value table section.
 
@@ -1110,7 +1211,7 @@ class KeyValueView(Vertical):
 
     KeyValueView .kv-filter {
         display: none;
-        dock: bottom;
+        height: auto;
         border: tall $accent;
     }
 
@@ -1733,6 +1834,104 @@ class _MetadataLockDetailScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+class _UserDetailScreen(ModalScreen[None]):
+    """Modal showing an account's summary plus its grants (fetched on demand)."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", key_display="Esc"),
+    ]
+
+    CSS = """
+    _UserDetailScreen {
+        align: center middle;
+        background: $background 80%;
+    }
+
+    #detail-container {
+        width: 80%;
+        max-width: 120;
+        height: auto;
+        max-height: 80%;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+
+    #detail-title {
+        text-style: bold;
+        padding-bottom: 1;
+    }
+
+    #detail-meta {
+        height: auto;
+        padding-bottom: 1;
+    }
+
+    .detail-section {
+        text-style: bold;
+        color: $accent;
+        padding-top: 1;
+    }
+
+    .detail-sql {
+        height: auto;
+        padding: 0 0 1 1;
+    }
+    """
+
+    def __init__(self, account: UserAccount) -> None:
+        """Initialize with the account whose detail is shown."""
+        super().__init__()
+        self._account = account
+
+    def compose(self) -> ComposeResult:
+        """Build the account detail modal."""
+        from mydba_tui.ui.mysql_highlight import highlight_mysql
+
+        acc = self._account
+        meta = [
+            f"[bold]Group:[/bold] {_meta_value(acc.group)}",
+            f"[bold]User:[/bold] {_meta_value(acc.user)}",
+            f"[bold]Host:[/bold] {_meta_value(acc.host)}",
+            f"[bold]Locked:[/bold] {'yes' if acc.locked else 'no'}",
+            f"[bold]Password expired:[/bold] {'yes' if acc.password_expired else 'no'}",
+            f"[bold]Password last changed:[/bold] {_meta_value(acc.password_last_changed)}",
+            f"[bold]Auth plugin:[/bold] {_meta_value(acc.plugin)}",
+        ]
+        with VerticalScroll(id="detail-container"):
+            yield Static(f"{acc.user}@{acc.host}", id="detail-title")
+            yield Static("\n".join(meta), id="detail-meta")
+            yield Static("[bold]Grants[/bold]", classes="detail-section")
+            grants = self._load_grants()
+            if grants is None:
+                yield Static(
+                    "[dim]Unable to read grants for this account.[/dim]",
+                    classes="detail-sql",
+                )
+            elif not grants:
+                yield Static("[dim]No grants.[/dim]", classes="detail-sql")
+            else:
+                for grant in grants:
+                    yield Static(highlight_mysql(grant), classes="detail-sql")
+
+    def _load_grants(self) -> list[str] | None:
+        """Fetch the account's grants on demand.
+
+        Returns None if not connected; otherwise the (possibly empty) grants.
+        """
+        from mydba_tui.connection import ConnectionResult
+        from mydba_tui.services.users import fetch_user_grants
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            return None
+        return fetch_user_grants(conn_result.connection, self._account.user, self._account.host)
+
+    def action_close(self) -> None:
+        """Dismiss the modal."""
+        self.dismiss(None)
+
+
 class _KeyValueDetailScreen(ModalScreen[None]):
     """Modal showing a single key/value entry's full name and value."""
 
@@ -1795,9 +1994,22 @@ class AdministrationScreen(Screen[None]):
     ]
 
     CSS = """
+    AdministrationScreen {
+        overflow: hidden;
+    }
+
+    AdministrationScreen #admin-tabs {
+        height: 1fr;
+    }
+
+    AdministrationScreen Footer {
+        dock: bottom;
+    }
+
     AdministrationScreen TabPane {
         padding: 0;
         height: 1fr;
+        overflow: hidden;
     }
     """
 
@@ -1816,6 +2028,8 @@ class AdministrationScreen(Screen[None]):
                 yield LocksView()
             with TabPane("Metadata Locks", id="tab-metadata-locks"):
                 yield MetadataLocksView()
+            with TabPane("Users", id="tab-users"):
+                yield UsersView()
             with TabPane("Variables", id="tab-variables"):
                 yield VariablesView()
             with TabPane("Status", id="tab-status"):

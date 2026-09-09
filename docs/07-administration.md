@@ -127,22 +127,43 @@ The goal is to quickly identify problematic sessions without writing custom quer
 
 # Users
 
-The Users section displays MySQL accounts grouped into logical categories.
+The Users section lists MySQL accounts, each assigned to a logical group, with
+detailed grants shown on demand. It is a manual-refresh Administration tab
+(placed after Metadata Locks); accounts change rarely, so there is no
+auto-refresh.
 
-Examples include:
+## SQL-driven grouping
 
-- Administrator users
-- Application users
-- Read-only users
-- Special users
+The grouping is defined entirely in `sql/admin/users.sql`, not in application
+code. A CASE expression over `mysql.user` (and correlated subqueries against
+`mysql.db` for schema-level privileges) assigns each account a group, and an
+outer query maps each group name to a colour. Anyone can edit this file to
+change the rules, add groups, or recolour them — the application only renders
+the result.
 
-The grouping mechanism is configurable and based on rules defined by the application.
+The default rules classify accounts into (first match wins):
 
-The initial grouping rules are intended for the development team's environments and may be customized later.
+- **System Users** — reserved server accounts (`root`, `mysql.sys`, etc.)
+- **Admin Users** — global SUPER, or global CREATE + ALTER + DROP
+- **Personal Users** — the username contains a dot (e.g. `name.surname`)
+- **Application Users** — CREATE + ALTER + DROP on at least one schema (checked
+  before read-only so an app account with extra SELECT grants stays here)
+- **Monitoring Users** — global PROCESS (checked before Replication, since a
+  monitoring account often also holds replication privileges)
+- **Replication Users** — global REPLICATION SLAVE or REPLICATION CLIENT
+- **Read-Only Users** — global SELECT, or schema-level SELECT with no writes
+- **Special Purpose Users** — anything else
 
-The main user list displays only summary information.
+## Presentation
 
-Detailed grants are displayed only when the user requests them.
+Columns: Group, User, Host, Locked, Password Expired, Password Changed, Auth
+Plugin. Rows are ordered by group, then user, then host, and the group name is
+colour-coded (colours come from the SQL, with an automatic palette fallback).
+
+- Filtering (`/`) matches across group, user, host, and auth plugin; `Esc`
+  clears. Refresh (`r`) reloads on demand.
+- `Enter` opens a detail view with the account summary and its grants, fetched
+  on demand with `SHOW GRANTS` (the one place per-account grant detail is run).
 
 ---
 

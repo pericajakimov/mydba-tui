@@ -9,6 +9,7 @@ from mydba_tui.ui.screens.administration import (
     ProcessListView,
     StatusView,
     TransactionsView,
+    UsersView,
     VariablesView,
 )
 
@@ -415,3 +416,73 @@ def test_metadata_locks_row_key_includes_object() -> None:
     view = MetadataLocksView()
     key = view._row_key(_mdl(waiting_pid=1, blocking_pid=2, object_schema="s", object_name="t"))
     assert key == "1\x002\x00s.t"
+
+
+def _account(**overrides: object):
+    from mydba_tui.services.users import UserAccount
+
+    base: dict[str, object] = {
+        "group": "Application Users",
+        "group_color": "",
+        "user": "app1_user",
+        "host": "%",
+        "locked": False,
+        "password_expired": False,
+        "password_last_changed": "2026-01-01 10:00:00",
+        "plugin": "caching_sha2_password",
+    }
+    base.update(overrides)
+    return UserAccount(**base)  # type: ignore[arg-type]
+
+
+def test_users_view_is_not_auto_refresh() -> None:
+    """The Users view is manual-refresh (no auto-refresh timer)."""
+    assert UsersView.auto_refresh is False
+
+
+def test_users_view_has_filter_and_refresh_bindings() -> None:
+    """The Users view still exposes filter and manual refresh."""
+    keys = _all_binding_keys(UsersView)
+    assert "r" in keys
+    assert "slash" in keys
+
+
+def test_users_filter_matches_group_user_host_plugin() -> None:
+    """The Users filter matches group, user, host, and plugin."""
+    view = UsersView()
+    view._items = [
+        _account(user="app1_user", group="Application Users"),
+        _account(user="john.doe", group="Personal Users", host="10.0.0.5"),
+    ]
+
+    view._filter = "personal"
+    assert [a.user for a in view._visible_items()] == ["john.doe"]  # type: ignore[attr-defined]
+
+    view._filter = "10.0.0.5"
+    assert [a.user for a in view._visible_items()] == ["john.doe"]  # type: ignore[attr-defined]
+
+    view._filter = ""
+    assert len(view._visible_items()) == 2
+
+
+def test_users_row_key_is_user_host() -> None:
+    """A user's row key is the user@host pair."""
+    view = UsersView()
+    assert view._row_key(_account(user="app", host="%")) == "app\x00%"
+
+
+def test_users_group_colors_respect_sql_then_auto() -> None:
+    """SQL-provided colours are used; empty ones auto-assign distinctly."""
+    view = UsersView()
+    view._items = [
+        _account(user="root", group="System Users", group_color="grey62"),
+        _account(user="app", group="Application Users", group_color=""),
+        _account(user="ro", group="Read-Only Users", group_color=""),
+    ]
+    colors = view._group_colors()
+    # Explicit SQL colour honoured.
+    assert colors["System Users"] == "grey62"
+    # Auto-assigned groups get distinct palette colours.
+    assert colors["Application Users"] != colors["Read-Only Users"]
+    assert colors["Application Users"] in UsersView._GROUP_PALETTE
+    assert colors["Read-Only Users"] in UsersView._GROUP_PALETTE

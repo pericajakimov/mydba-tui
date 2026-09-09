@@ -196,6 +196,7 @@ _EXTRACTED_SQL_FILES = [
     "admin/statement_history.sql",
     "admin/lock_waits.sql",
     "admin/metadata_lock_waits.sql",
+    "admin/users.sql",
     "browser/dep_views.sql",
     "browser/dep_procedures.sql",
     "browser/dep_functions.sql",
@@ -273,3 +274,23 @@ def test_loaded_sql_starts_with_statement_after_tag() -> None:
     body = sql[len("/* mydba */ ") :]
     assert not body.lstrip().startswith("--")
     assert body.upper().startswith("SELECT")
+
+
+def test_users_sql_contains_all_group_labels() -> None:
+    """The users query classifies into all six documented groups."""
+    sql = load_sql("admin/users.sql")
+    for label in (
+        "System Users",
+        "Admin Users",
+        "Personal Users",
+        "Application Users",
+        "Replication Users",
+        "Monitoring Users",
+        "Read-Only Users",
+        "Special Purpose Users",
+    ):
+        assert label in sql, f"missing group label {label}"
+    assert "mysql.user" in sql
+    assert "mysql.db" in sql
+    assert "password_last_changed" in sql
+    assert "group_color" in sql

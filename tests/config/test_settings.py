@@ -12,7 +12,7 @@ def test_settings_defaults() -> None:
     assert settings.theme == "textual-dark"
     assert settings.log_level == "WARNING"
     assert settings.sql_log_enabled is True
-    assert settings.refresh_interval == 3
+    assert settings.refresh_interval == 5
     assert settings.export_format == "csv"
     assert settings.result_format == "mysql"
 

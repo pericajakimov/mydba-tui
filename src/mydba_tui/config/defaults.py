@@ -15,8 +15,11 @@ DEFAULT_LOG_LEVEL = "WARNING"
 DEFAULT_SQL_LOG_ENABLED = True
 """Whether SQL logging is enabled by default."""
 
-DEFAULT_REFRESH_INTERVAL = 3
-"""Default monitoring refresh interval in seconds."""
+DEFAULT_REFRESH_INTERVAL = 5
+"""Default auto-refresh interval in seconds (for live Administration tabs)."""
+
+REFRESH_INTERVAL_CHOICES = (5, 10, 30, 60)
+"""Selectable auto-refresh intervals (seconds), cycled with the interval key."""
 
 DEFAULT_EXPORT_FORMAT = "csv"
 """Default export format."""

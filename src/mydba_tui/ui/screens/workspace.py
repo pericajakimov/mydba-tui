@@ -433,7 +433,6 @@ class WorkspaceScreen(Screen[None]):
     def _execute_in_thread(self, sql: str) -> None:
         """Execute SQL statements (runs in background thread)."""
         from mydba_tui.connection import ConnectionResult
-        from mydba_tui.logging import log_sql
 
         conn_result = getattr(self.app, "db_connection", None)
         if conn_result is None or not isinstance(conn_result, ConnectionResult):
@@ -443,6 +442,11 @@ class WorkspaceScreen(Screen[None]):
 
         # Split into individual statements (handles ; and \G)
         statements = self._split_statements(sql)
+        self._execute_statements(conn_result, statements)
+
+    def _execute_statements(self, conn_result: Any, statements: list[tuple[str, bool]]) -> None:
+        """Run the split statements sequentially on the shared connection."""
+        from mydba_tui.logging import log_sql
 
         for stmt, vertical in statements:
             stmt = stmt.strip()

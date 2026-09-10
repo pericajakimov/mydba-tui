@@ -10,6 +10,7 @@ All SQL executed here is written to the SQL log for transparency.
 
 from __future__ import annotations
 
+from rich.markup import escape as rich_escape
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
@@ -17,8 +18,17 @@ from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.timer import Timer
-from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
+from textual.widgets import (
+    DataTable,
+    Footer,
+    Header,
+    Input,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 
+from mydba_tui.config.defaults import DEFAULT_REFRESH_INTERVAL, REFRESH_INTERVAL_CHOICES
 from mydba_tui.services.connections import ConnectionStat, fetch_connection_stats
 from mydba_tui.services.locks import LOCK_COLUMNS, LockWait, fetch_lock_waits
 from mydba_tui.services.metadata_locks import (
@@ -32,6 +42,12 @@ from mydba_tui.services.processlist import (
     fetch_processes,
     kill_session,
 )
+from mydba_tui.services.replication import (
+    ReplicationInfo,
+    compute_verdict,
+    fetch_replication,
+    lag_trend,
+)
 from mydba_tui.services.status import fetch_status
 from mydba_tui.services.transactions import (
     TRANSACTION_COLUMNS,
@@ -44,6 +60,42 @@ from mydba_tui.services.users import USER_COLUMNS, UserAccount, fetch_users
 from mydba_tui.services.variables import fetch_variables
 from mydba_tui.ui.screens.workspace import WorkspaceScreen
 from mydba_tui.ui.widgets import ConfirmDialog, StatusBar
+
+
+def _current_interval(app: object) -> int:
+    """The active auto-refresh interval (seconds) from app settings."""
+    value = getattr(getattr(app, "settings", None), "refresh_interval", DEFAULT_REFRESH_INTERVAL)
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return DEFAULT_REFRESH_INTERVAL
+
+
+def _cycle_interval(app: object) -> int:
+    """Advance the app's auto-refresh interval to the next fixed choice.
+
+    Cycles through REFRESH_INTERVAL_CHOICES (wrapping around), persists the new
+    value to settings, and returns it. Shared by every auto-refreshing view so
+    changing the interval on one tab applies everywhere.
+    """
+    from mydba_tui.config import save_settings
+
+    settings = getattr(app, "settings", None)
+    current = _current_interval(app)
+    choices = REFRESH_INTERVAL_CHOICES
+    try:
+        nxt = choices[(choices.index(current) + 1) % len(choices)]
+    except ValueError:
+        # Current value isn't one of the choices — snap to the first.
+        nxt = choices[0]
+    if settings is not None:
+        settings.refresh_interval = nxt
+        try:
+            save_settings(settings)
+        except Exception:
+            pass
+    return nxt
+
 
 # Maximum characters of the Info (query) column shown inline in the table.
 _INFO_TRUNCATE = 80
@@ -94,6 +146,90 @@ def _format_seconds(seconds: int) -> str:
 def _format_time_field(seconds: int) -> str:
     """Render the Time field as raw seconds plus a human-readable form."""
     return f"{seconds} ({_format_seconds(seconds)})"
+
+
+def _format_bytes(num: int) -> str:
+    """Format a byte count in human-readable units."""
+    size = float(num)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def _format_ago(seconds: int) -> str:
+    """Format an elapsed duration as a compact relative label (e.g. 90s, 3m)."""
+    if seconds < 90:
+        return f"{seconds}s"
+    minutes = seconds / 60
+    if minutes < 90:
+        return f"{round(minutes)}m"
+    return f"{round(minutes / 60)}h"
+
+
+# Left gutter width (cells) reserved for y-axis labels in the lag chart.
+_LAG_GUTTER = 6
+
+
+def _render_lag_chart(samples: list[int], width: int, height: int, interval: int) -> Text:
+    """Render the replica-lag chart: framed braille line with axes.
+
+    Always renders a full frame with a flat baseline, so a healthy replica
+    (lag pinned at 0) still reads clearly as a working graph. A y-axis shows
+    peak and 0; the x-axis shows how far back the window reaches.
+
+    Args:
+        samples: Lag values (seconds), oldest first.
+        width: Available width in cells.
+        height: Chart height in cells.
+        interval: Seconds between samples (the refresh interval), used to label
+            the time axis.
+
+    Returns:
+        A Rich Text chart (empty Text only if there is truly no room).
+    """
+    from mydba_tui.renderers.chart import braille_line_chart
+
+    if not samples or width < _LAG_GUTTER + 8 or height < 2:
+        return Text()
+
+    peak = max(samples)
+    # Give a flat/zero series a non-zero axis so the baseline sits at the
+    # bottom of a full-height frame rather than collapsing the chart.
+    y_max = float(max(peak, 5))
+    chart_w = max(width - _LAG_GUTTER, 8)
+    chart = braille_line_chart(
+        [float(s) for s in samples], chart_w, height, color="cyan", y_max=y_max
+    )
+
+    # Prefix each chart row with y-axis labels: the axis ceiling on top, 0 on
+    # the bottom. The ceiling is the peak (or the 5s floor for a flat series),
+    # so a healthy replica reads as a clear "pinned at the bottom" line.
+    top_label = int(y_max)
+    lines = [ln for ln in chart.split("\n") if ln.plain]
+    out = Text()
+    n = len(lines)
+    for i, line in enumerate(lines):
+        if i == 0:
+            label = f"{top_label:>4}s "
+        elif i == n - 1:
+            label = f"{0:>4}s "
+        else:
+            label = " " * _LAG_GUTTER
+        out.append(label, style="dim")
+        out.append_text(line)
+        out.append("\n")
+
+    # X-axis: oldest sample on the left, "now" on the right.
+    span = _format_ago((len(samples) - 1) * max(interval, 1))
+    axis = " " * _LAG_GUTTER + "└" + "─" * (chart_w - 1)
+    out.append(axis + "\n", style="dim")
+    left = f"-{span}"
+    right = "now"
+    pad = max(chart_w - len(left) - len(right), 1)
+    out.append(" " * _LAG_GUTTER + left + " " * pad + right, style="dim")
+    return out
 
 
 def _render_statement_history(history: list[StatementHistoryEntry] | None) -> Static:
@@ -217,8 +353,15 @@ class LiveTableView(Vertical):
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh", key_display="R", priority=True),
-        Binding("p", "toggle_pause", "Pause/Resume", key_display="P"),
         Binding("slash", "filter", "Filter", key_display="/"),
+    ]
+
+    # Live-update bindings, added by subclasses that support live refresh (all
+    # except Users). Kept out of the base BINDINGS so manual-only tabs don't
+    # surface L/I in the footer (Textual merges bindings up the MRO).
+    LIVE_BINDINGS = [
+        Binding("l", "toggle_live", "Live On/Off", key_display="L"),
+        Binding("i", "cycle_interval", "Interval", key_display="I"),
     ]
 
     DEFAULT_CSS = """
@@ -252,10 +395,11 @@ class LiveTableView(Vertical):
     columns: tuple[str, ...] = ()
     filter_placeholder: str = "Filter — Enter to keep, Esc to clear"
     noun: str = "rows"
-    # When False, the view loads once and does not auto-refresh on a timer
-    # (still supports manual refresh with `r` and filtering). Used by
-    # non-live sections such as Users.
-    auto_refresh: bool = True
+    # When True, the view offers opt-in live updates (L toggles them; I cycles
+    # the interval). Live updates are always OFF until the user turns them on —
+    # the view loads its data once on open and otherwise refreshes only on R.
+    # When False the view has no live option at all (e.g. Users).
+    supports_live: bool = True
 
     # --- Data hooks (subclasses implement) ---
     def _fetch(self) -> list[object]:
@@ -286,7 +430,8 @@ class LiveTableView(Vertical):
         """Initialize live view state."""
         super().__init__()
         self._items: list[object] = []
-        self._paused: bool = False
+        # Live updates are opt-in and start OFF; the view loads once on open.
+        self._live: bool = False
         self._filter: str = ""
         self._refresh_timer: Timer | None = None
 
@@ -315,35 +460,60 @@ class LiveTableView(Vertical):
         yield Input(placeholder=self.filter_placeholder, id=self._filter_id, classes="live-filter")
 
     def on_mount(self) -> None:
-        """Set up the table columns and (for live views) start auto-refresh."""
+        """Set up the table columns and load the data once.
+
+        Live updates are opt-in (L) and off by default, so we do not query on a
+        timer here — the tab simply loads its data once. The refresh timer is
+        created only when the user enables live updates.
+        """
         table = self.query_one(f"#{self._table_id}", DataTable)
         for col in self.columns:
             table.add_column(col, key=col)
 
-        self.action_refresh()
+        # First load is deferred so the tab paints (with a "Loading…" note)
+        # before the query runs — on a busy server the query can take a moment.
+        self._load_deferred()
 
-        if self.auto_refresh:
-            interval = getattr(getattr(self.app, "settings", None), "refresh_interval", 3)
-            interval = max(1, int(interval))
-            self._refresh_timer = self.set_interval(interval, self._on_refresh_tick)
+    def _start_timer(self) -> None:
+        """(Re)start the live-update timer at the current interval."""
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+        self._refresh_timer = self.set_interval(_current_interval(self.app), self._on_refresh_tick)
 
     def refresh_data(self) -> None:
-        """Public hook to reload data (called when the tab is shown)."""
-        # Non-live views load once; re-querying on every tab activation would
-        # be wasteful (and Users runs a heavier grouping query).
-        if not self.auto_refresh and self._items:
+        """Public hook to reload data (called when the tab is shown).
+
+        Re-entering a tab is instant: if data is already loaded we keep it (a
+        fresh query would be wasteful and could stutter a busy server). Only
+        the first activation loads.
+        """
+        if self._items:
             return
-        self.action_refresh()
+        self._load_deferred()
+
+    def _load_deferred(self) -> None:
+        """Paint a loading note, then run the query on the next tick.
+
+        Keeps the DB query on the UI thread (the shared connection is not
+        thread-safe) while letting the tab paint first, so switching to a tab
+        never looks frozen while the first query runs.
+        """
+        if not self._items:
+            self._show_message("[cyan]⟳ Loading…[/cyan]")
+            # Short timer so the loading note paints before the query blocks.
+            self.set_timer(0.05, self.action_refresh)
+        else:
+            self.call_after_refresh(self.action_refresh)
 
     # --- Data loading ---
 
     def _on_refresh_tick(self) -> None:
-        """Timer callback — refresh unless paused and only when this tab is active.
+        """Timer callback — fetch only while live AND this tab is active.
 
         Background tabs must not query the shared connection; that both wastes
         the connection and slows the visible tab.
         """
-        if self._paused or not _view_is_active_tab(self):
+        if not self._live or not _view_is_active_tab(self):
             return
         self.action_refresh()
 
@@ -407,8 +577,11 @@ class LiveTableView(Vertical):
     def _update_info(self, shown: int, total: int) -> None:
         """Update the info line above the table."""
         flags = []
-        if self._paused:
-            flags.append("[yellow]PAUSED[/yellow]")
+        if self.supports_live:
+            if self._live:
+                flags.append(f"[green]● live[/green] every {_current_interval(self.app)}s")
+            else:
+                flags.append("[dim]○ live off[/dim]")
         flags.extend(self._extra_flags())
         if self._filter:
             flags.append(f"filter: '{self._filter}'")
@@ -437,13 +610,31 @@ class LiveTableView(Vertical):
 
     # --- View controls ---
 
-    def action_toggle_pause(self) -> None:
-        """Toggle auto-refresh (no-op for non-live views)."""
-        if not self.auto_refresh:
+    def action_toggle_live(self) -> None:
+        """Turn live auto-refresh on or off (no-op for non-live views)."""
+        if not self.supports_live:
             return
-        self._paused = not self._paused
-        self._render_table(self._items)
-        self.notify("Auto-refresh paused." if self._paused else "Auto-refresh resumed.")
+        self._live = not self._live
+        if self._live:
+            self._start_timer()
+            self.action_refresh()  # refresh at once so the data is current
+            self.notify(f"Live updates on — every {_current_interval(self.app)}s.")
+        else:
+            if self._refresh_timer is not None:
+                self._refresh_timer.stop()
+                self._refresh_timer = None
+            self._render_table(self._items)
+            self.notify("Live updates off.")
+
+    def action_cycle_interval(self) -> None:
+        """Cycle the live-update interval through the fixed choices."""
+        if not self.supports_live:
+            return
+        new_interval = _cycle_interval(self.app)
+        if self._live:
+            self._start_timer()
+        self._render_table(self._items)  # refresh the info-line "every Ns"
+        self.notify(f"Live interval: {new_interval}s.")
 
     def action_filter(self) -> None:
         """Reveal the filter input and focus it."""
@@ -497,6 +688,7 @@ class ProcessListView(LiveTableView):
     """Process List section — a live, filterable view of active sessions."""
 
     BINDINGS = [
+        *LiveTableView.LIVE_BINDINGS,
         Binding("s", "toggle_sleeping", "Hide Sleeping", key_display="S"),
         Binding("k", "kill_query", "Kill Query", key_display="k"),
         Binding("K", "kill_connection", "Kill Conn", key_display="K"),
@@ -666,6 +858,8 @@ class ProcessListView(LiveTableView):
 class ConnectionsView(LiveTableView):
     """Connections section — live connection counts grouped by (user, host)."""
 
+    BINDINGS = [*LiveTableView.LIVE_BINDINGS]
+
     id_prefix = "conn"
     columns = ("User", "Host", "Connections")
     filter_placeholder = "Filter (user or host) — Enter to keep, Esc to clear"
@@ -701,8 +895,11 @@ class ConnectionsView(LiveTableView):
         total_conns = sum(s.count for s in all_stats)
         shown_conns = sum(s.count for s in visible)
         flags = []
-        if self._paused:
-            flags.append("[yellow]PAUSED[/yellow]")
+        if self.supports_live:
+            if self._live:
+                flags.append(f"[green]● live[/green] every {_current_interval(self.app)}s")
+            else:
+                flags.append("[dim]○ live off[/dim]")
         if self._filter:
             flags.append(f"filter: '{self._filter}'")
         suffix = f"  ({', '.join(flags)})" if flags else ""
@@ -716,6 +913,7 @@ class TransactionsView(LiveTableView):
     """Transactions section — active InnoDB transactions, longest-running first."""
 
     BINDINGS = [
+        *LiveTableView.LIVE_BINDINGS,
         Binding("k", "kill_connection", "Kill Conn", key_display="K"),
         Binding("w", "open_in_workspace", "To Workspace", key_display="W"),
     ]
@@ -850,6 +1048,7 @@ class LocksView(LiveTableView):
     """Locks section — InnoDB row-lock waits (who is blocked by whom)."""
 
     BINDINGS = [
+        *LiveTableView.LIVE_BINDINGS,
         Binding("k", "kill_blocker", "Kill Blocker", key_display="K"),
     ]
 
@@ -976,6 +1175,7 @@ class MetadataLocksView(LiveTableView):
     """Metadata Locks section — table MDL waits (who is blocked by whom)."""
 
     BINDINGS = [
+        *LiveTableView.LIVE_BINDINGS,
         Binding("k", "kill_blocker", "Kill Blocker", key_display="K"),
     ]
 
@@ -1094,11 +1294,19 @@ class MetadataLocksView(LiveTableView):
 class UsersView(LiveTableView):
     """Users section — accounts grouped by role, with grants on demand."""
 
+    # No live updates for Users — only manual refresh and filter. Overriding
+    # BINDINGS drops the inherited L (live) and I (interval) keys so they don't
+    # appear in the footer for a tab that never auto-refreshes.
+    BINDINGS = [
+        Binding("r", "refresh", "Refresh", key_display="R", priority=True),
+        Binding("slash", "filter", "Filter", key_display="/"),
+    ]
+
     id_prefix = "users"
     columns = tuple(USER_COLUMNS)
     filter_placeholder = "Filter (group, user, host) — Enter to keep, Esc to clear"
     noun = "accounts"
-    auto_refresh = False  # accounts change rarely; manual refresh only
+    supports_live = False  # accounts change rarely; load once, manual R only
 
     # Palette for auto-assigning group colours when the SQL leaves group_color
     # empty. Chosen to be readable and to avoid the red/green used elsewhere
@@ -1178,6 +1386,398 @@ class UsersView(LiveTableView):
             self.notify("No account selected.", severity="warning")
             return
         self.app.push_screen(_UserDetailScreen(acc))
+
+
+class ReplicationView(Vertical):
+    """Replication section — a read-only unified cockpit.
+
+    Role- and vendor-aware: shows a health banner, per-channel replica status
+    with a live lag graph, primary/binlog state, GTID state, and Galera/PXC
+    cluster state. Auto-refreshes (pausable); read-only.
+    """
+
+    BINDINGS = [
+        Binding("r", "refresh", "Refresh", key_display="R", priority=True),
+        Binding("l", "toggle_live", "Live On/Off", key_display="L"),
+        Binding("i", "cycle_interval", "Interval", key_display="I"),
+    ]
+
+    # Focusable so its bindings surface in the Footer and Tab moves focus into
+    # the content (matching the table-based tabs). The body is Static-only, so
+    # without this the view could never take focus.
+    can_focus = True
+
+    DEFAULT_CSS = """
+    ReplicationView {
+        height: 1fr;
+        overflow-y: auto;
+        border: round $panel;
+    }
+
+    ReplicationView:focus {
+        /* Highlight the pane while it holds focus so it's obvious the tab's
+           keys (R/P) are active and arrows scroll the body rather than the
+           tab bar. */
+        border: round $accent;
+        background: $boost;
+    }
+
+    ReplicationView #repl-banner {
+        height: auto;
+        padding: 1 2 0 2;
+        text-style: bold;
+    }
+
+    ReplicationView #repl-status {
+        height: auto;
+        padding: 0 2 1 2;
+        color: $text-muted;
+        text-align: right;
+    }
+
+    ReplicationView #repl-lag {
+        height: auto;
+        margin: 0 2 1 2;
+    }
+
+    ReplicationView #repl-body {
+        height: auto;
+        padding: 0 2 1 2;
+    }
+    """
+
+    # How much history the lag graph keeps, as a duration. The sample cap is
+    # derived from this and the refresh interval (e.g. 30 min at a 3s interval
+    # is 600 samples), so the window is a real 30 minutes regardless of the
+    # configured refresh rate.
+    _LAG_WINDOW_SECONDS = 30 * 60
+
+    def __init__(self) -> None:
+        """Initialize replication view state."""
+        super().__init__()
+        # Live updates start OFF. Each full fetch runs several queries on the
+        # single (UI-thread-only) connection, so the tab loads once on open;
+        # the user turns on live updates with L (or refreshes on demand with R).
+        self._live: bool = False
+        self._refresh_timer: Timer | None = None
+        self._lag_samples: list[int] = []
+        self._loaded_once: bool = False
+        self._last_info: ReplicationInfo | None = None
+        self._interval: int = 5
+        self._fetching: bool = False
+
+    def compose(self) -> ComposeResult:
+        """Build the cockpit layout."""
+        yield Static("", id="repl-banner")
+        yield Static("", id="repl-status")
+        yield Static("", id="repl-lag")
+        yield Static("", id="repl-body")
+
+    def on_mount(self) -> None:
+        """Set up the (initially stopped) refresh timer and the focus title.
+
+        The first fetch happens on tab activation, not on mount — the tab is
+        not the default one, so querying on mount would run ~13 queries for a
+        tab the user may never open. Auto-refresh is off until the user enables
+        it with P; the timer only fetches while live AND this tab is active.
+        """
+        self._loaded_once = False
+        self._interval = _current_interval(self.app)
+        self.border_title = "Replication"
+        self._render_status_line()
+        self._start_timer()
+
+    def _start_timer(self) -> None:
+        """(Re)start the auto-refresh timer at the current interval."""
+        self._interval = _current_interval(self.app)
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+        self._refresh_timer = self.set_interval(self._interval, self._on_refresh_tick)
+
+    def refresh_data(self) -> None:
+        """Public hook called when the tab is shown.
+
+        Re-entering the tab is instant: if data is already loaded, re-render it
+        from cache. Only the first activation triggers a (deferred) fetch.
+        """
+        if self._loaded_once and self._last_info is not None:
+            self._render_view(self._last_info)
+            return
+        self.action_refresh()
+
+    def on_focus(self) -> None:
+        """Reflect focus in the pane title."""
+        self.border_title = "Replication  (focused — R refresh · L live)"
+
+    def on_blur(self) -> None:
+        """Reflect loss of focus in the pane title."""
+        self.border_title = "Replication"
+
+    def _on_refresh_tick(self) -> None:
+        """Timer callback — fetch only when live and this tab is active."""
+        if not self._live or not _view_is_active_tab(self):
+            return
+        self.action_refresh()
+
+    def action_toggle_live(self) -> None:
+        """Turn live auto-refresh on or off."""
+        self._live = not self._live
+        if self._live:
+            self.notify(f"Live updates on — refreshing every {self._interval}s.")
+            # Fetch immediately so the graph starts moving without waiting a tick.
+            self.action_refresh()
+        else:
+            self.notify("Live updates off.")
+        self._render_status_line()
+
+    def action_cycle_interval(self) -> None:
+        """Cycle the auto-refresh interval through the fixed choices."""
+        new_interval = _cycle_interval(self.app)
+        self._start_timer()
+        self._render_status_line()
+        self.notify(f"Auto-refresh interval: {new_interval}s.")
+
+    def action_refresh(self) -> None:
+        """Reload replication state.
+
+        The single shared mysql-connector connection is not thread-safe (its C
+        backend crashes the interpreter if used from two threads), so the fetch
+        runs on the UI thread — the same rule the rest of Administration and the
+        object browser follow. To avoid a frozen-looking first paint, the very
+        first load shows a loading banner and defers the fetch one tick so the
+        banner paints first. A re-entrancy guard prevents timer ticks from
+        stacking fetches on top of one another.
+        """
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            self.query_one("#repl-banner", Static).update(
+                "[yellow]Not connected to a database.[/yellow]"
+            )
+            return
+
+        # Don't stack fetches: if one is already scheduled/running, skip.
+        if self._fetching:
+            return
+        self._fetching = True
+
+        if not self._loaded_once:
+            self.query_one("#repl-banner", Static).update(
+                "[cyan]⟳ Loading replication status…[/cyan]"
+            )
+            # Defer one tick so the loading banner paints before the fetch runs.
+            self.set_timer(0.05, self._do_fetch)
+        else:
+            self.call_after_refresh(self._do_fetch)
+
+    def _do_fetch(self) -> None:
+        """Run the queries (on the UI thread) and render."""
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if conn_result is None or not isinstance(conn_result, ConnectionResult):
+            self._fetching = False
+            return
+
+        server_info = getattr(self.app, "server_info", None)
+        try:
+            info = fetch_replication(conn_result.connection, server_info)
+        except Exception as e:
+            self.query_one("#repl-banner", Static).update(f"[red]Error: {e}[/red]")
+            self._fetching = False
+            return
+
+        self._loaded_once = True
+        self._last_info = info
+        self._update_lag_samples(info)
+        self._render_view(info)
+        self._fetching = False
+
+    @property
+    def _lag_window(self) -> int:
+        """Max samples to keep = window duration / refresh interval."""
+        return max(self._LAG_WINDOW_SECONDS // max(self._interval, 1), 2)
+
+    def _update_lag_samples(self, info: ReplicationInfo) -> None:
+        """Append the worst current replica lag to the rolling window."""
+        lags = [c.seconds_behind for c in info.channels if c.seconds_behind is not None]
+        if not lags:
+            return
+        self._lag_samples.append(max(lags))
+        cap = self._lag_window
+        if len(self._lag_samples) > cap:
+            self._lag_samples = self._lag_samples[-cap:]
+
+    _LEVEL_COLOR = {
+        "healthy": "green",
+        "warn": "yellow",
+        "error": "red",
+        "info": "cyan",
+    }
+
+    def _render_view(self, info: ReplicationInfo) -> None:
+        """Render banner, refresh status, lag graph, and the structured body."""
+        verdict = compute_verdict(info)
+        color = self._LEVEL_COLOR.get(verdict.level, "white")
+        # Restore the original banner styling (colored verdict, no extra text).
+        self.query_one("#repl-banner", Static).update(f"[{color}]● {verdict.text}[/{color}]")
+
+        # Refresh status line: tells the reader how often the graph updates, or
+        # that auto-refresh is paused. Its own dim, right-aligned line so it is
+        # always visible above the graph regardless of banner width.
+        self._render_status_line()
+
+        # Lag graph: shown whenever this host is a replica (even when lag is a
+        # flat 0, so the graph reads as "healthy and working"). Hidden only on
+        # non-replicas, where there is nothing to plot.
+        lag_widget = self.query_one("#repl-lag", Static)
+        if self._lag_samples:
+            lag_widget.display = True
+            width = max(self.size.width - 4, 20)
+            lag_widget.update(_render_lag_chart(self._lag_samples, width, 6, self._interval))
+        else:
+            lag_widget.display = False
+
+        self.query_one("#repl-body", Static).update(self._build_body(info))
+
+    def _status_markup(self) -> str:
+        """Refresh-status text: live cadence, or a hint to enable it."""
+        if self._live:
+            return f"[green]● live[/green] · every {self._interval}s  ·  L to stop · R to refresh"
+        return "[dim]○ live off[/dim]  ·  L to start live updates · R to refresh once"
+
+    def _render_status_line(self) -> None:
+        """Update the refresh-status line (interval or paused)."""
+        self.query_one("#repl-status", Static).update(self._status_markup())
+
+    @staticmethod
+    def _kv_block(rows: list[tuple[str, str]]) -> list[str]:
+        """Format (label, value) pairs as an aligned block (vertical/\\G style).
+
+        Labels are right-aligned to a common width and separated from values by
+        a colon, so every value starts in the same column regardless of label
+        length. Rich markup in values does not affect the label alignment (only
+        the label text is measured).
+        """
+        if not rows:
+            return []
+        width = max(len(label) for label, _ in rows)
+        return [f"  {label:>{width}} : {value}" for label, value in rows]
+
+    def _build_body(self, info: ReplicationInfo) -> str:
+        """Build the structured body as Rich markup."""
+        parts: list[str] = []
+
+        # Replica channels (this host as a replica / middle of a chain).
+        for ch in info.channels:
+            name = f" (channel '{ch.channel}')" if ch.channel else ""
+            parts.append(f"[bold cyan]Replica{name}[/bold cyan]")
+            io_c = "green" if ch.io_running.lower() == "yes" else "red"
+            sql_c = "green" if ch.sql_running.lower() == "yes" else "red"
+            if ch.seconds_behind is None:
+                lag = "[red]NULL (not replicating)[/red]"
+            else:
+                trend = lag_trend(self._lag_samples)
+                lag = f"{ch.seconds_behind}s {trend}"
+
+            rows: list[tuple[str, str]] = [
+                ("IO thread", f"[{io_c}]{ch.io_running or '—'}[/{io_c}]"),
+                ("SQL thread", f"[{sql_c}]{ch.sql_running or '—'}[/{sql_c}]"),
+                ("Lag", lag),
+                ("Source", f"{ch.source_host or '—'}:{ch.source_port or '—'}"),
+                ("Source log", f"{ch.source_log_file or '—'} @ {ch.read_source_log_pos or '—'}"),
+                (
+                    "Applied",
+                    f"{ch.relay_source_log_file or '—'} @ {ch.exec_source_log_pos or '—'}",
+                ),
+            ]
+            # Retrieved-but-not-yet-applied work on the current source file.
+            unapplied = ch.unapplied_bytes
+            if unapplied is not None:
+                rows.append(("Unapplied", f"{_format_bytes(unapplied)} (retrieved, not applied)"))
+            rows.append(("Relay log", f"{ch.relay_log_file or '—'} @ {ch.relay_log_pos or '—'}"))
+            relay_space = _format_bytes(ch.relay_log_space) if ch.relay_log_space else "—"
+            rows.append(("Relay log disk usage", relay_space))
+            # Applier threads (parallel replication).
+            if ch.parallel_workers > 0:
+                busy = f"{ch.busy_workers} busy" if ch.busy_workers else "idle"
+                ptype = f" [{ch.parallel_type}]" if ch.parallel_type else ""
+                rows.append(("Applier", f"{ch.parallel_workers} workers{ptype}, {busy}"))
+            else:
+                rows.append(("Applier", "single-threaded"))
+            rows.append(("Auto-position", "on" if ch.auto_position else "off"))
+            if ch.last_io_error.strip():
+                rows.append(("IO error", f"[red]{ch.last_io_errno}: {ch.last_io_error}[/red]"))
+            if ch.last_sql_error.strip():
+                rows.append(("SQL error", f"[red]{ch.last_sql_errno}: {ch.last_sql_error}[/red]"))
+            parts.extend(self._kv_block(rows))
+            parts.append("")
+
+        # Binary logs of the local host (a replica may also write its own
+        # binlogs for chained replication, so this is not necessarily "primary").
+        p = info.primary
+        if p.is_primary or p.binlog_file:
+            parts.append("[bold cyan]Binary Logs[/bold cyan]")
+            binlog_rows: list[tuple[str, str]] = []
+            if p.binlog_file:
+                binlog_rows.append(("Current binlog", f"{p.binlog_file} @ {p.binlog_pos}"))
+            if p.binlog_format:
+                binlog_rows.append(("Format", p.binlog_format))
+            if p.binlog_row_image:
+                binlog_rows.append(("Row image", p.binlog_row_image))
+            if p.binlog_row_metadata:
+                binlog_rows.append(("Row metadata", p.binlog_row_metadata))
+            if p.binlog_count:
+                binlog_rows.append(
+                    ("Binary logs", f"{p.binlog_count} ({_format_bytes(p.binlog_total_bytes)})")
+                )
+            parts.extend(self._kv_block(binlog_rows))
+            parts.append("")
+
+        # Connected replicas (downstream) — valid on a primary or a chain node.
+        if p.replicas:
+            n = len(p.replicas)
+            parts.append(f"[bold cyan]Connected Replicas ({n})[/bold cyan]")
+            for r in p.replicas:
+                parts.append(f"  • server_id {r.server_id or '—'}  {r.host or '—'}:{r.port or '—'}")
+            parts.append("")
+
+        # GTID — sets shown on their own lines (they can be long / multi-line).
+        if info.gtid.enabled:
+            parts.append("[bold cyan]GTID[/bold cyan]")
+            for label, value in (
+                ("Retrieved", info.gtid.retrieved),
+                ("Executed", info.gtid.executed),
+                ("Purged", info.gtid.purged),
+            ):
+                parts.append(f"  [bold]{label}[/bold]")
+                parts.append(f"    {rich_escape(value) if value else '—'}")
+            parts.append("")
+
+        # Cluster (Galera / PXC).
+        c = info.cluster
+        if c.enabled:
+            parts.append("[bold cyan]Galera / PXC Cluster[/bold cyan]")
+            synced = c.local_state.lower() == "synced"
+            state_c = "green" if synced else "yellow"
+            parts.extend(
+                self._kv_block(
+                    [
+                        ("Cluster", c.cluster_name or "—"),
+                        ("Status", c.cluster_status or "—"),
+                        ("Local state", f"[{state_c}]{c.local_state or '—'}[/{state_c}]"),
+                        ("Nodes", c.cluster_size or "—"),
+                        ("Flow control paused", c.flow_control_paused or "0"),
+                    ]
+                )
+            )
+            parts.append("")
+
+        if not parts:
+            parts.append("[dim]No replication configured on this server.[/dim]")
+
+        return "\n".join(parts)
 
 
 class KeyValueView(Vertical):
@@ -1273,13 +1873,27 @@ class KeyValueView(Vertical):
         table = self.query_one(f"#{self._table_id}", DataTable)
         table.add_column(self.name_column, key="name")
         table.add_column(self.value_column, key="value")
-        self.action_refresh()
+        self._load_deferred()
 
     def refresh_data(self) -> None:
         """Public hook to (re)load data when the tab is shown."""
         if self.load_once and self._rows:
             return
-        self.action_refresh()
+        self._load_deferred()
+
+    def _load_deferred(self) -> None:
+        """Paint a loading note, then run the query on the next tick.
+
+        Lets the tab paint before the (sometimes heavy) query runs, so a busy
+        server never makes tab switching look frozen. The query stays on the UI
+        thread — the shared connection is not thread-safe.
+        """
+        if not self._rows:
+            self.query_one(f"#{self._info_id}", Static).update("[cyan]⟳ Loading…[/cyan]")
+            # Short timer so the loading note paints before the query blocks.
+            self.set_timer(0.05, self.action_refresh)
+        else:
+            self.call_after_refresh(self.action_refresh)
 
     # --- Data loading ---
 
@@ -2034,6 +2648,8 @@ class AdministrationScreen(Screen[None]):
                 yield VariablesView()
             with TabPane("Status", id="tab-status"):
                 yield StatusView()
+            with TabPane("Replication", id="tab-replication"):
+                yield ReplicationView()
         yield Footer()
 
     def on_mount(self) -> None:
@@ -2053,9 +2669,12 @@ class AdministrationScreen(Screen[None]):
             view.refresh_data()
         for live in pane.walk_children(LiveTableView):
             live.refresh_data()
+        for repl in pane.walk_children(ReplicationView):
+            repl.refresh_data()
         # Focus is intentionally left on the tab bar so arrow keys switch tabs;
         # the user presses Tab to move focus into the active tab's content
-        # (matching the Object Browser).
+        # (matching the Object Browser). This applies to the Replication tab
+        # too — it is not focused automatically on open.
 
     def _sync_status_bar(self) -> None:
         """Sync the status bar with the current connection state."""

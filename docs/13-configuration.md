@@ -30,7 +30,7 @@ Configuration should describe **how the application behaves**, not **what it doe
 Examples include:
 
 - Theme selection
-- Refresh intervals
+- The Administration live-update refresh interval
 - Default export directory
 - SQL logging
 - Editor preferences
@@ -59,7 +59,9 @@ Application settings control global application behavior.
 Examples include:
 
 - Default theme
-- Monitoring refresh interval
+- Administration live-update refresh interval (`refresh_interval`; one of 5,
+  10, 30, 60 seconds, cycled in-app with the `I` key and shared by all live
+  Administration tabs)
 - SQL logging options
 - Application logging level
 - Default export directory
@@ -190,7 +192,7 @@ Typical settings include:
 
 - Theme
 - Logging
-- Monitoring refresh interval
+- Administration live-update refresh interval
 - Export defaults
 - Editor preferences
 

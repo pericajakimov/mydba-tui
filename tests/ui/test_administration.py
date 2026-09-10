@@ -7,6 +7,7 @@ from mydba_tui.ui.screens.administration import (
     LocksView,
     MetadataLocksView,
     ProcessListView,
+    ReplicationView,
     StatusView,
     TransactionsView,
     UsersView,
@@ -48,9 +49,9 @@ def _all_binding_keys(view_cls: type) -> set[str]:
 
 
 def test_process_list_view_bindings_present() -> None:
-    """The Process List view exposes refresh, pause, filter, and kill keys."""
+    """The Process List view exposes refresh, live, interval, filter, and kill."""
     keys = _all_binding_keys(ProcessListView)
-    for key in ("r", "p", "s", "slash", "k", "K", "w"):
+    for key in ("r", "l", "i", "s", "slash", "k", "K", "w"):
         assert key in keys, f"missing binding {key}"
 
 
@@ -228,9 +229,9 @@ def test_view_config_differs() -> None:
 
 
 def test_connections_view_bindings_present() -> None:
-    """The Connections view exposes refresh, pause, and filter keys."""
+    """The Connections view exposes refresh, live, interval, and filter keys."""
     keys = _all_binding_keys(ConnectionsView)
-    for key in ("r", "p", "slash"):
+    for key in ("r", "l", "i", "slash"):
         assert key in keys, f"missing binding {key}"
 
 
@@ -275,9 +276,9 @@ def _trx(**overrides: object):
 
 
 def test_transactions_view_bindings_present() -> None:
-    """The Transactions view exposes refresh, pause, filter, kill, workspace."""
+    """The Transactions view exposes refresh, live, filter, kill, workspace."""
     keys = _all_binding_keys(TransactionsView)
-    for key in ("r", "p", "slash", "k", "w"):
+    for key in ("r", "l", "i", "slash", "k", "w"):
         assert key in keys, f"missing binding {key}"
 
 
@@ -336,9 +337,9 @@ def _lock(**overrides: object):
 
 
 def test_locks_view_bindings_present() -> None:
-    """The Locks view exposes refresh, pause, filter, and kill-blocker."""
+    """The Locks view exposes refresh, live, filter, and kill-blocker."""
     keys = _all_binding_keys(LocksView)
-    for key in ("r", "p", "slash", "k"):
+    for key in ("r", "l", "i", "slash", "k"):
         assert key in keys, f"missing binding {key}"
 
 
@@ -387,9 +388,9 @@ def _mdl(**overrides: object):
 
 
 def test_metadata_locks_view_bindings_present() -> None:
-    """The Metadata Locks view exposes refresh, pause, filter, kill-blocker."""
+    """The Metadata Locks view exposes refresh, live, filter, kill-blocker."""
     keys = _all_binding_keys(MetadataLocksView)
-    for key in ("r", "p", "slash", "k"):
+    for key in ("r", "l", "i", "slash", "k"):
         assert key in keys, f"missing binding {key}"
 
 
@@ -435,16 +436,27 @@ def _account(**overrides: object):
     return UserAccount(**base)  # type: ignore[arg-type]
 
 
-def test_users_view_is_not_auto_refresh() -> None:
-    """The Users view is manual-refresh (no auto-refresh timer)."""
-    assert UsersView.auto_refresh is False
+def test_live_views_start_with_live_off() -> None:
+    """Live-capable views load once and never auto-start live updates."""
+    for view_cls in (ProcessListView, ConnectionsView, TransactionsView):
+        view = view_cls()
+        assert view.supports_live is True
+        assert view._live is False
 
 
-def test_users_view_has_filter_and_refresh_bindings() -> None:
-    """The Users view still exposes filter and manual refresh."""
+def test_users_view_is_not_live() -> None:
+    """The Users view has no live updates (load once, manual refresh only)."""
+    assert UsersView.supports_live is False
+
+
+def test_users_view_has_filter_and_refresh_bindings_only() -> None:
+    """The Users view exposes filter and manual refresh, but no live/interval."""
     keys = _all_binding_keys(UsersView)
     assert "r" in keys
     assert "slash" in keys
+    # No live-updates or interval keys on a manual-only tab.
+    assert "l" not in keys
+    assert "i" not in keys
 
 
 def test_users_filter_matches_group_user_host_plugin() -> None:
@@ -486,3 +498,167 @@ def test_users_group_colors_respect_sql_then_auto() -> None:
     assert colors["Application Users"] != colors["Read-Only Users"]
     assert colors["Application Users"] in UsersView._GROUP_PALETTE
     assert colors["Read-Only Users"] in UsersView._GROUP_PALETTE
+
+
+def test_replication_view_bindings_present() -> None:
+    """The Replication view exposes refresh and live-toggle."""
+    keys = [b.key for b in ReplicationView.BINDINGS]
+    assert "r" in keys
+    assert "l" in keys
+    assert "i" in keys
+
+
+def test_replication_view_lag_window_bounded() -> None:
+    """The rolling lag window is capped at the interval-derived sample count."""
+    from mydba_tui.services.replication import ReplicaChannel, ReplicationInfo
+
+    view = ReplicationView()
+    # Force a small window so the test is fast: 20s of history at 10s/sample = 2.
+    view._LAG_WINDOW_SECONDS = 20
+    view._interval = 10
+    cap = view._lag_window
+    assert cap == 2
+
+    def channel(lag: int) -> ReplicaChannel:
+        return ReplicaChannel(
+            channel="",
+            io_running="Yes",
+            sql_running="Yes",
+            seconds_behind=lag,
+            source_host="h",
+            source_port="3306",
+            source_log_file="b",
+            read_source_log_pos="1",
+            relay_source_log_file="b",
+            exec_source_log_pos="1",
+            relay_log_file="r",
+            relay_log_pos="1",
+            relay_log_space=0,
+            retrieved_gtid_set="",
+            executed_gtid_set="",
+            auto_position=True,
+            parallel_workers=0,
+            parallel_type="",
+            busy_workers=0,
+            last_io_error="",
+            last_sql_error="",
+            last_io_errno="0",
+            last_sql_errno="0",
+        )
+
+    for i in range(cap + 20):
+        view._update_lag_samples(ReplicationInfo(channels=[channel(i)]))
+
+    assert len(view._lag_samples) == cap
+    # Keeps the most recent samples.
+    assert view._lag_samples[-1] == cap + 19
+
+
+def test_replication_lag_window_is_thirty_minutes_default() -> None:
+    """The default window holds 30 minutes of samples for the given interval."""
+    view = ReplicationView()
+    assert view._LAG_WINDOW_SECONDS == 30 * 60
+    view._interval = 3
+    assert view._lag_window == (30 * 60) // 3  # 600 samples at 3s
+    view._interval = 5
+    assert view._lag_window == (30 * 60) // 5  # 360 samples at 5s
+
+
+def test_replication_status_line_text() -> None:
+    """The refresh-status text shows the live cadence, or an off hint."""
+    view = ReplicationView()
+    view._interval = 5
+
+    view._live = True
+    assert "every 5s" in view._status_markup()
+    assert "live" in view._status_markup()
+
+    view._live = False
+    assert "off" in view._status_markup()
+    assert "every 5s" not in view._status_markup()
+
+
+def test_replication_toggle_live_flips_state() -> None:
+    """Toggling live flips the flag; auto-refresh is off by default."""
+    view = ReplicationView()
+    # Stub out side effects that need a mounted app / DOM.
+    view.notify = lambda *a, **k: None  # type: ignore[method-assign]
+    view._render_status_line = lambda: None  # type: ignore[method-assign]
+    view.action_refresh = lambda: None  # type: ignore[method-assign]
+
+    assert view._live is False  # off by default
+    view.action_toggle_live()
+    assert view._live is True
+    view.action_toggle_live()
+    assert view._live is False
+
+
+def test_render_lag_chart_flat_zero_still_renders() -> None:
+    """A healthy replica (lag flat at 0) still renders a framed chart."""
+    from mydba_tui.ui.screens.administration import _render_lag_chart
+
+    chart = _render_lag_chart([0, 0, 0, 0, 0], width=60, height=6, interval=3)
+    text = chart.plain
+    # Not empty, has a y-axis (0s) and an x-axis frame + relative time labels.
+    assert text.strip() != ""
+    assert "0s" in text
+    assert "└" in text
+    assert "now" in text
+
+
+def test_render_lag_chart_time_axis_scales_with_interval() -> None:
+    """The x-axis span reflects sample count times the refresh interval."""
+    from mydba_tui.ui.screens.administration import _render_lag_chart
+
+    # 11 samples at 3s spacing -> 30s back.
+    chart = _render_lag_chart([0] * 11, width=60, height=6, interval=3)
+    assert "-30s" in chart.plain
+
+
+def test_render_lag_chart_no_room_returns_empty() -> None:
+    """Too little width yields an empty chart (nothing to draw)."""
+    from mydba_tui.ui.screens.administration import _render_lag_chart
+
+    assert _render_lag_chart([1, 2, 3], width=4, height=6, interval=3).plain == ""
+
+
+def test_cycle_interval_advances_through_choices(monkeypatch: object) -> None:
+    """Cycling steps through the fixed choices and wraps around, persisting."""
+    import mydba_tui.config as config_mod
+    from mydba_tui.config import Settings
+    from mydba_tui.config.defaults import REFRESH_INTERVAL_CHOICES
+    from mydba_tui.ui.screens.administration import _current_interval, _cycle_interval
+
+    saved: list[int] = []
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        config_mod, "save_settings", lambda s: saved.append(s.refresh_interval)
+    )
+
+    class _App:
+        def __init__(self) -> None:
+            self.settings = Settings(refresh_interval=REFRESH_INTERVAL_CHOICES[0])
+
+    app = _App()
+    assert _current_interval(app) == REFRESH_INTERVAL_CHOICES[0]
+
+    # Walk the whole ring and confirm we return to the start.
+    seen = [_cycle_interval(app) for _ in REFRESH_INTERVAL_CHOICES]
+    assert seen == [*REFRESH_INTERVAL_CHOICES[1:], REFRESH_INTERVAL_CHOICES[0]]
+    # Each step was persisted.
+    assert saved == seen
+
+
+def test_cycle_interval_snaps_unknown_value_to_first_choice(monkeypatch: object) -> None:
+    """A non-standard stored interval snaps to the first choice on cycle."""
+    import mydba_tui.config as config_mod
+    from mydba_tui.config import Settings
+    from mydba_tui.config.defaults import REFRESH_INTERVAL_CHOICES
+    from mydba_tui.ui.screens.administration import _cycle_interval
+
+    monkeypatch.setattr(config_mod, "save_settings", lambda s: None)  # type: ignore[attr-defined]
+
+    class _App:
+        def __init__(self) -> None:
+            self.settings = Settings(refresh_interval=7)  # not a choice
+
+    assert _cycle_interval(_App()) == REFRESH_INTERVAL_CHOICES[0]

@@ -36,13 +36,18 @@ Implemented:
   TSV, SQL INSERT/batch, JSONL, JSON, XML, HTML, Markdown), interactive and
   streaming direct export
 
-In progress / next:
+Implemented (continued):
 
 - Administration — tabbed screen with Process List (live, filterable, kill
   sessions, open query in workspace), Connections (grouped counts), Transactions
   (active InnoDB transactions with statement history), InnoDB Locks and Metadata
   Locks (blocking waits with kill-blocker), Users (SQL-driven grouping with
-  grants on demand), Variables, and Status; Replication next
+  grants on demand), Variables, Status, and Replication (a role/vendor-aware
+  cockpit with a live lag graph). The live-capable tabs load once and offer
+  opt-in live updates with a configurable, shared refresh interval.
+
+In progress / next:
+
 - Monitoring (server activity, live metrics, lightweight graphs)
 - Polish (performance, rendering, error handling, additional themes)
 
@@ -106,7 +111,7 @@ In progress / next:
 
 ---
 
-## Milestone 5 — Administration 🚧 In progress
+## Milestone 5 — Administration ✅ Done
 
 - Process List ✅
 - Connections ✅
@@ -116,11 +121,10 @@ In progress / next:
 - Users ✅
 - Variables ✅
 - Status ✅
-- Replication
-- Locks
-- Metadata Locks
-- InnoDB Status
-- Connection statistics
+- Replication ✅
+
+> InnoDB Status remains documented as a future section; the core Administration
+> milestone (the sections above) is complete.
 
 ---
 

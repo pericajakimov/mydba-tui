@@ -30,7 +30,8 @@ class Settings:
         theme: Textual theme name (e.g. "textual-dark", "nord", "dracula").
         log_level: Application log verbosity (DEBUG, INFO, WARNING, ERROR).
         sql_log_enabled: Whether SQL statements are written to the SQL log.
-        refresh_interval: Monitoring refresh interval in seconds.
+        refresh_interval: Auto-refresh interval in seconds for live
+            Administration tabs (one of 5, 10, 30, 60; cycled with the I key).
         export_format: Default export format (csv, tsv, sql, jsonl).
         result_format: Result table style ('mysql' for bordered, 'simple' for plain).
         format_rules: SQL formatter configuration rules.
@@ -115,8 +116,8 @@ def save_settings(settings: Settings, path: Path | None = None) -> None:
         "#   Values: true, false",
         f"sql_log_enabled: {str(settings.sql_log_enabled).lower()}",
         "",
-        "# refresh_interval: Monitoring refresh interval in seconds.",
-        "#   Values: any positive integer",
+        "# refresh_interval: Auto-refresh interval (seconds) for live Administration tabs.",
+        "#   Values: 5, 10, 30, 60 (cycle in-app with the I key)",
         f"refresh_interval: {settings.refresh_interval}",
         "",
         "# export_format: Default format for data export.",

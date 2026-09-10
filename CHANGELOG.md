@@ -14,20 +14,37 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 
 - Tabbed Administration screen (reached from the Object Browser with `A`),
   navigated like the Object Browser tabs.
+- Replication tab (last): a read-only, role- and vendor-aware cockpit with a
+  colored health verdict (HEALTHY/LAGGING/BROKEN/PRIMARY/GALERA/STANDALONE), a
+  live replica-lag graph (a dependency-free braille line-chart with a relative
+  time axis and up to 30 minutes of history), per-channel replica status
+  (threads, lag with trend, source and applied positions, unapplied bytes,
+  relay-log file/position and total relay-log disk usage, applier worker
+  info), the local Binary Logs (file/position, format, row image, row
+  metadata, count and total size), connected replicas (for chained
+  replication), GTID state (Retrieved/Executed/Purged), and Galera/PXC cluster
+  state. Scalar variables are read in one batched query; the wsrep status
+  counters only on a cluster node.
+- Live-updates model across the live-capable tabs (Process List, Connections,
+  Transactions, InnoDB Locks, Metadata Locks, Replication): each tab loads its
+  data once and no longer auto-refreshes on open. Live updates are opt-in and
+  off by default — `L` starts/stops them, `R` refreshes on demand, and `I`
+  cycles the refresh interval through fixed choices (5, 10, 30, 60 seconds),
+  shared across tabs and persisted. Replaces the previous pause/resume model.
 - Variables tab: all global variables as a sorted Variable/Value table with
   immediate name+value filtering, manual refresh, and a full-value view on
   Enter.
 - Status tab: all global status counters in the same key/value presentation;
   reloads on each visit since counters change over time.
 - Connections tab (second, after Process List): live connection counts grouped
-  by User and Host (IP), sorted by count, with auto-refresh, pause, and filter.
+  by User and Host (IP), sorted by count, with opt-in live updates and filter.
 - Transactions tab (after Connections): active InnoDB transactions, longest
-  running first, with auto-refresh, pause, filter, kill-connection, open-query-
+  running first, with opt-in live updates, filter, kill-connection, open-query-
   in-workspace, and a detail view including the connection's statement history
   from performance_schema.
 - InnoDB Locks tab (after Transactions): InnoDB row-lock waits from the sys
-  schema showing blocked and blocking sessions with lock modes, auto-refresh,
-  pause, filter, and kill-blocking-connection. The detail view shows both
+  schema showing blocked and blocking sessions with lock modes, opt-in live
+  updates, filter, and kill-blocking-connection. The detail view shows both
   queries, explains the lock modes, and includes the blocking session's recent
   statement history (useful when the blocker is idle).
 - Metadata Locks tab (after InnoDB Locks): table metadata-lock waits from the
@@ -40,12 +57,13 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
   entirely in SQL (System/Admin/Personal/Application/Monitoring/Replication/
   Read-Only/Special Purpose), colour-coded group names, filtering, and grants
   shown on demand via a detail view. Manual refresh (no auto-refresh).
-- LiveTableView gained an auto_refresh flag so non-live views (Users) reuse the
-  table/filter/detail machinery without the refresh timer.
-- Shared LiveTableView base underlying the Process List, Connections, and
-  Transactions views (auto-refresh, pause, filter, cursor preservation).
-- Administration tabs only query the server while visible; background tabs no
-  longer auto-refresh the shared connection.
+- Shared LiveTableView base underlying the Process List, Connections,
+  Transactions, InnoDB Locks, and Metadata Locks views (load-once, opt-in live
+  updates, interval cycling, filter, cursor preservation). A `supports_live`
+  flag lets manual-only views (Users) reuse the table/filter/detail machinery
+  without any live-update controls.
+- Administration tabs only query the server while visible; background tabs
+  never refresh the shared connection.
 - Process List: a live view of active MySQL sessions, now the first
   Administration tab. The query source is chosen per server
   (`performance_schema.processlist` for MySQL 8.0+, `information_schema` for
@@ -53,8 +71,8 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 - Columns: Id, User, Host (IP only), db, Command, Time, State, Program, Info.
   The Program name is sourced from `session_connect_attrs` on the
   performance_schema path.
-- Auto-refresh on an interval, pausable and resumable, with manual refresh and
-  cursor position preserved across refreshes.
+- Loads once, with opt-in live updates (`L`), manual refresh (`R`), and cursor
+  position preserved across refreshes.
 - Immediate client-side filtering across fields and a hide-sleeping toggle.
 - Session detail view (`Enter`) showing all fields in full plus the
   syntax-highlighted query.
@@ -125,6 +143,9 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 #### Configuration
 
 - Documented `settings.yaml` with human-readable durations.
+- `refresh_interval` now drives the Administration live-update cadence, defaults
+  to 5 seconds, and is cycled in-app through the fixed choices 5, 10, 30, 60
+  (the previous default was 3). Existing config files keep their stored value.
 
 #### Tooling
 

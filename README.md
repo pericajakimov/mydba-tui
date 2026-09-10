@@ -185,15 +185,18 @@ the Object Browser, and writing and running SQL in the SQL Workspace
 (highlighting, EXPLAIN, autocomplete, formatting, session logging, and a
 pluggable export framework).
 
-Administration has begun as a tabbed screen: a live Process List (view active
-sessions, filter, kill a query or connection, open a session's query in the SQL
-Workspace), a Connections overview (counts grouped by user and host), a
-Transactions view (active InnoDB transactions with statement history), InnoDB
-Locks and Metadata Locks views (blocking waits with kill-the-blocker), a Users
-view (accounts grouped by role with grants on demand), and Variables and Status
-browsers (all filterable). Further Administration sections, Monitoring, and
-polish are the next areas of work. See
-[`ROADMAP.md`](ROADMAP.md) for the current status of each milestone.
+Administration is a tabbed screen: a Process List (view active sessions, filter,
+kill a query or connection, open a session's query in the SQL Workspace), a
+Connections overview (counts grouped by user and host), a Transactions view
+(active InnoDB transactions with statement history), InnoDB Locks and Metadata
+Locks views (blocking waits with kill-the-blocker), a Users view (accounts
+grouped by role with grants on demand), Variables and Status browsers, and a
+Replication cockpit (role- and vendor-aware, with a live replica-lag graph,
+per-channel status, binary logs, GTID, and Galera/PXC state). The live-capable
+tabs load once and offer opt-in live updates (`L`) on a configurable, shared
+refresh interval; all are filterable. Monitoring and polish are the next areas
+of work. See [`ROADMAP.md`](ROADMAP.md) for the current status of each
+milestone.
 
 ---
 

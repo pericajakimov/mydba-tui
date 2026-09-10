@@ -76,10 +76,14 @@ Id, User, Host, db, Command, Time, State, Program, Info.
 
 ## Live view and refresh
 
-The list refreshes automatically on an interval (the `refresh_interval`
-setting). Auto-refresh can be paused and resumed so a session can be inspected
-without the list changing underneath the cursor. The cursor position is
-preserved across refreshes by session id.
+The Process List loads its data once when the tab is opened and then stays
+still — it does not poll the server on its own. Live updates are opt-in: press
+`L` to start refreshing on an interval and `L` again to stop. `R` refreshes
+once at any time, and `I` cycles the refresh interval through a fixed set of
+choices (5, 10, 30, 60 seconds; the choice is shared by every live tab and
+persisted to `refresh_interval`). While live, the cursor position is preserved
+across refreshes by session id, and the info line shows the live state and
+interval. Only the visible tab queries the server.
 
 ## Filtering
 
@@ -112,7 +116,8 @@ content the query is appended; otherwise it replaces the empty editor.
 | Key | Action |
 |-----|--------|
 | R | Refresh now |
-| P | Pause / resume auto-refresh |
+| L | Start / stop live updates |
+| I | Cycle the refresh interval |
 | S | Toggle hiding sleeping connections |
 | / | Filter (Enter keeps, Esc clears) |
 | Enter | Session detail |
@@ -169,25 +174,95 @@ colour-coded (colours come from the SQL, with an automatic palette fallback).
 
 # Replication
 
-The Replication section displays replication topology and status.
+The Replication section is a read-only, role- and vendor-aware cockpit for
+everything about replication on the connected server: a health verdict, a live
+replica-lag graph, per-channel replica status, the local binary logs, GTID
+state, and Galera/PXC cluster state. It is the last Administration tab.
 
-If the connected server is a primary server:
+A server can play several roles at once (a PXC node that is also an async
+replica, or a mid-chain host that is both a replica and a primary), so each
+section is shown only when it applies. A plain standalone server shows a simple
+"standalone" verdict.
 
-Display attached replicas.
+## Health verdict
 
-If the connected server is a replica:
+A colored banner summarises the overall state, computed in Python from the
+gathered fields (worst state wins): BROKEN (a stopped/errored thread) →
+LAGGING (a running replica at or over the lag threshold) → HEALTHY → GALERA
+(synced cluster) → PRIMARY (has connected replicas) → STANDALONE.
 
-Display information about its replication source together with the most important replication status.
+## Replica lag graph
 
-Typical information includes:
+When the host is a replica, a braille line-chart (drawn without any external
+charting dependency) shows recent replica lag with a y-axis (peak and 0) and a
+relative time x-axis. A healthy replica reads as a flat line pinned at 0 rather
+than an empty panel. The rolling window holds up to 30 minutes of history; the
+sample cadence follows the refresh interval, and the x-axis label reflects the
+actual span.
 
-- IO Thread
-- SQL Thread
-- Replication Lag
-- Source Server
-- Replication State
+## Replica section (per channel)
 
-The presentation should provide immediate operational awareness rather than expose every field returned by `SHOW REPLICA STATUS`.
+For each replication channel: IO and SQL thread state (colored), lag with a
+trend arrow, source host/port, the source-log read and applied positions,
+retrieved-but-not-yet-applied bytes ("Unapplied", when both positions are on
+the same source file), relay-log file/position, total relay-log disk usage
+(the sum of all relay logs on disk, matching PMM's relay-log metric), applier
+threads (parallel worker count/type and busy workers, or single-threaded),
+auto-position, and any IO/SQL thread errors. Sections are laid out as an
+aligned label/value block (like `\G` vertical output).
+
+## Binary Logs
+
+The local host's binary logs (a replica may write its own binlogs for chained
+replication, so this is deliberately not called "primary"): current binlog file
+and position, format, row image, row metadata, and the binary-log count with
+total size.
+
+## Connected Replicas
+
+Replicas connected to this host (from `SHOW REPLICAS`) with server id, host,
+and port — shown on a primary or on a mid-chain replica, so chained replication
+is visible.
+
+## GTID
+
+GTID mode with the Retrieved, Executed, and Purged sets, each rendered on its
+own lines below its label (the sets can be long and contain newlines).
+
+## Cluster (Galera / PXC)
+
+For a wsrep node: cluster name, status, local state (colored by synced), node
+count, and flow-control pause fraction. The wsrep status counters are queried
+only when the server is actually a cluster node.
+
+## Efficient data collection
+
+The full picture is gathered with a handful of queries. All the scalar global
+variables it needs are read in a single batched `SHOW GLOBAL VARIABLES WHERE
+Variable_name IN (...)` rather than one query per variable; the wsrep status
+counters are read in one batched query and only on a cluster node. Every query
+is best-effort, tagged, and written to the SQL log; a missing privilege or
+unsupported feature yields empty data rather than an error.
+
+## Live updates
+
+Like the other operational tabs, Replication loads once when opened and does
+not poll on its own. Press `L` to start live updates (the graph then samples on
+the refresh interval), `L` again to stop, `R` to refresh once, and `I` to cycle
+the refresh interval. A status line under the banner shows whether live updates
+are on and at what interval.
+
+## Keybindings
+
+| Key | Action |
+|-----|--------|
+| R | Refresh now |
+| L | Start / stop live updates |
+| I | Cycle the refresh interval |
+| Esc | Back to Object Browser |
+
+This section is read-only. Actions that change replication (start/stop, reset,
+skip) are intentionally left to the SQL Workspace.
 
 ---
 
@@ -243,9 +318,9 @@ Waiting Query, Blocking PID, Blocking User, Blocking Mode, Blocking Query. Rows
 are sorted with the longest-waiting first. The lock mode is shown as InnoDB's
 short code in the table (e.g. `X`, `X,GAP`).
 
-Like the other live views, it auto-refreshes (pausable with `p`, manual with
-`r`) and supports filtering (`/`, matching users, table, lock modes, and
-queries).
+Like the other live views, it loads once and supports opt-in live updates
+(`L` starts/stops, `I` cycles the interval, `R` refreshes now) and filtering
+(`/`, matching users, table, lock modes, and queries).
 
 Actions:
 
@@ -278,8 +353,9 @@ Columns: Trx ID, Conn ID, User, Host (IP), DB, State, Age (human-readable),
 Rows Locked, and Query. Rows are sorted with the longest-running transactions
 first, so stuck or slow transactions surface at the top.
 
-Like the other live views, it auto-refreshes (pausable with `p`, manual with
-`r`) and supports filtering (`/`, matching user, host, db, state, and query).
+Like the other live views, it loads once and supports opt-in live updates
+(`L` starts/stops, `I` cycles the interval, `R` refreshes now) and filtering
+(`/`, matching user, host, db, state, and query).
 
 Actions:
 
@@ -319,12 +395,13 @@ connections from the same source collapse into one group regardless of client
 port. For each group the number of active connections is shown, sorted with the
 heaviest sources first.
 
-Like the Process List, it is a live view:
+Like the Process List, it is a live-capable view:
 
-- Auto-refresh on the interval, pausable with `p`, plus manual refresh (`r`).
+- Loads once; opt-in live updates with `L` (start/stop), `I` cycles the
+  interval, and `R` refreshes now.
 - Filtering (`/`) matches across User and Host; `Esc` clears.
 
-Only the visible tab queries the server; background tabs do not auto-refresh.
+Only the visible tab queries the server; background tabs do not refresh.
 
 The purpose is to quickly understand connection distribution across
 applications and users.
@@ -343,9 +420,9 @@ Columns: Wait Age, Object, Waiting PID, Waiting Account, Waiting Lock, Waiting
 Query, Blocking PID, Blocking Account, Blocking Lock. Rows are sorted
 longest-waiting first.
 
-Like the other live views it auto-refreshes (pausable with `p`, manual with
-`r`) and supports filtering (`/`, matching accounts, object, lock types, and
-queries).
+Like the other live views it loads once and supports opt-in live updates
+(`L` starts/stops, `I` cycles the interval, `R` refreshes now) and filtering
+(`/`, matching accounts, object, lock types, and queries).
 
 Actions:
 
@@ -388,13 +465,22 @@ The user should not need to rerun queries simply to narrow the visible results.
 
 # Refresh
 
-Most operational information is refreshed only when explicitly requested by the
-user.
+Every Administration tab loads its data once when opened and does not poll the
+server on its own. Refreshing is always available on demand with `R`.
 
-The Process List is an exception: because a live view of active sessions is
-genuinely useful, it refreshes automatically on an interval. This auto-refresh
-can be paused and resumed at any time, and refreshing can always be triggered
-manually.
+The live-capable tabs (Process List, Connections, Transactions, InnoDB Locks,
+Metadata Locks, and Replication) additionally offer opt-in **live updates**:
+
+- `L` starts and stops live updates. Live updates are always off until turned
+  on — nothing auto-starts.
+- `I` cycles the refresh interval through a fixed set of choices — 5, 10, 30,
+  and 60 seconds. The choice is shared by all live tabs and persisted to the
+  `refresh_interval` setting.
+- Only the visible tab queries the server; a background tab never refreshes.
+
+Manual-only tabs (Users, Variables, Status) load once and refresh with `R`;
+they have no live-update option. Status additionally reloads each time its tab
+is shown, since counters change over time.
 
 ---
 

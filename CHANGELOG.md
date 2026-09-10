@@ -95,6 +95,30 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 - Open a session's query in the SQL Workspace (`W`) with a metadata comment
   header (including a human-readable duration) for examination and EXPLAIN.
 
+#### Monitoring
+
+- Monitoring screen (reached from the Object Browser with `M`): a lightweight
+  live dashboard for quick situational awareness, organized into sub-tabs —
+  Overview (queries/sec, connections, InnoDB rows read/written), InnoDB (buffer
+  pool hit rate, pages flushed, row activity, lock waits, plus buffer pool /
+  dirty pages / history list / log waits), Throughput (SELECT vs write statement
+  rates from the Com_* counters, network bytes in/out, slow queries, aborted
+  connects, connection errors), Locks (lock-wait rates and the live blocked-
+  session count), and Replication (a replica-lag graph reusing the
+  Administration replication service).
+- Each sub-tab is a 2×2 grid of bordered braille graphs plus an instant-metrics
+  strip. Metrics are computed from one cheap `SHOW GLOBAL STATUS` snapshot per
+  tick, with per-second rates from counter deltas (guarded against restarts).
+- Live by default with `L` to pause, `R` to sample now, and `I` to cycle the
+  shared refresh interval (5/10/30/60s). All sub-tabs sample continuously on a
+  single screen-level timer, so switching sub-tabs never leaves a graph with a
+  stale gap. History is session-local and rolling.
+- Graphs use a fixed 30-minute time window that fills from the right ("now") to
+  the left as history accumulates, with y-axis value labels and an x-axis time
+  scale, via a shared framed time-series renderer. The Administration
+  Replication tab's lag graph now uses the same renderer and fixed-window
+  behavior.
+
 #### Connection Manager
 
 - Connection profiles with environment grouping and backend/vendor detection.

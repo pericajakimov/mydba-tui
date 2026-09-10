@@ -608,13 +608,19 @@ def test_render_lag_chart_flat_zero_still_renders() -> None:
     assert "now" in text
 
 
-def test_render_lag_chart_time_axis_scales_with_interval() -> None:
-    """The x-axis span reflects sample count times the refresh interval."""
+def test_render_lag_chart_uses_fixed_window_axis() -> None:
+    """The x-axis is the fixed window (fills right->left), not sample-count based."""
     from mydba_tui.ui.screens.administration import _render_lag_chart
 
-    # 11 samples at 3s spacing -> 30s back.
-    chart = _render_lag_chart([0] * 11, width=60, height=6, interval=3)
-    assert "-30s" in chart.plain
+    # Only a few samples, but a 30-minute window: the axis label is the window
+    # span, not the elapsed sample time. Newest sample sits at "now" (right).
+    chart = _render_lag_chart([0] * 5, width=60, height=6, interval=5, window_seconds=30 * 60)
+    text = chart.plain
+    assert "-30m" in text
+    assert "now" in text
+    # A 60s window shows -60s regardless of how many samples we have.
+    chart2 = _render_lag_chart([0] * 3, width=60, height=6, interval=5, window_seconds=60)
+    assert "-60s" in chart2.plain
 
 
 def test_render_lag_chart_no_room_returns_empty() -> None:

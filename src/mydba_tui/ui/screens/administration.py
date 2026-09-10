@@ -167,78 +167,44 @@ def _format_bytes(num: int) -> str:
     return f"{size:.1f} TB"
 
 
-def _format_ago(seconds: int) -> str:
-    """Format an elapsed duration as a compact relative label (e.g. 90s, 3m)."""
-    if seconds < 90:
-        return f"{seconds}s"
-    minutes = seconds / 60
-    if minutes < 90:
-        return f"{round(minutes)}m"
-    return f"{round(minutes / 60)}h"
+def _render_lag_chart(
+    samples: list[int], width: int, height: int, interval: int, window_seconds: int = 30 * 60
+) -> Text:
+    """Render the replica-lag chart over a fixed time window.
 
-
-# Left gutter width (cells) reserved for y-axis labels in the lag chart.
-_LAG_GUTTER = 6
-
-
-def _render_lag_chart(samples: list[int], width: int, height: int, interval: int) -> Text:
-    """Render the replica-lag chart: framed braille line with axes.
-
-    Always renders a full frame with a flat baseline, so a healthy replica
-    (lag pinned at 0) still reads clearly as a working graph. A y-axis shows
-    peak and 0; the x-axis shows how far back the window reaches.
+    The x-axis is a fixed window (default 30 min); the newest sample sits at the
+    right edge and the line fills from the right toward the left as history
+    builds. A flat/zero series still reads as a clear baseline (a 5s y-axis
+    floor keeps the frame from collapsing). Uses the shared framed renderer so
+    the Monitoring graphs and this one look and behave identically.
 
     Args:
         samples: Lag values (seconds), oldest first.
         width: Available width in cells.
         height: Chart height in cells.
-        interval: Seconds between samples (the refresh interval), used to label
-            the time axis.
+        interval: Seconds between samples (the refresh interval).
+        window_seconds: Fixed x-axis span in seconds.
 
     Returns:
         A Rich Text chart (empty Text only if there is truly no room).
     """
-    from mydba_tui.renderers.chart import braille_line_chart
+    from mydba_tui.renderers.chart import render_timeseries
 
-    if not samples or width < _LAG_GUTTER + 8 or height < 2:
+    if not samples:
         return Text()
-
     peak = max(samples)
-    # Give a flat/zero series a non-zero axis so the baseline sits at the
-    # bottom of a full-height frame rather than collapsing the chart.
-    y_max = float(max(peak, 5))
-    chart_w = max(width - _LAG_GUTTER, 8)
-    chart = braille_line_chart(
-        [float(s) for s in samples], chart_w, height, color="cyan", y_max=y_max
+    return render_timeseries(
+        [float(s) for s in samples],
+        width,
+        height,
+        interval,
+        window_seconds,
+        unit="s",
+        color="cyan",
+        # Floor the ceiling so a healthy (flat 0) replica reads as a baseline.
+        y_max=float(max(peak, 5)),
+        value_fmt=lambda v: f"{int(v)}",
     )
-
-    # Prefix each chart row with y-axis labels: the axis ceiling on top, 0 on
-    # the bottom. The ceiling is the peak (or the 5s floor for a flat series),
-    # so a healthy replica reads as a clear "pinned at the bottom" line.
-    top_label = int(y_max)
-    lines = [ln for ln in chart.split("\n") if ln.plain]
-    out = Text()
-    n = len(lines)
-    for i, line in enumerate(lines):
-        if i == 0:
-            label = f"{top_label:>4}s "
-        elif i == n - 1:
-            label = f"{0:>4}s "
-        else:
-            label = " " * _LAG_GUTTER
-        out.append(label, style="dim")
-        out.append_text(line)
-        out.append("\n")
-
-    # X-axis: oldest sample on the left, "now" on the right.
-    span = _format_ago((len(samples) - 1) * max(interval, 1))
-    axis = " " * _LAG_GUTTER + "└" + "─" * (chart_w - 1)
-    out.append(axis + "\n", style="dim")
-    left = f"-{span}"
-    right = "now"
-    pad = max(chart_w - len(left) - len(right), 1)
-    out.append(" " * _LAG_GUTTER + left + " " * pad + right, style="dim")
-    return out
 
 
 def _render_statement_history(history: list[StatementHistoryEntry] | None) -> Static:
@@ -1644,7 +1610,11 @@ class ReplicationView(Vertical):
         if self._lag_samples:
             lag_widget.display = True
             width = max(self.size.width - 4, 20)
-            lag_widget.update(_render_lag_chart(self._lag_samples, width, 6, self._interval))
+            lag_widget.update(
+                _render_lag_chart(
+                    self._lag_samples, width, 6, self._interval, self._LAG_WINDOW_SECONDS
+                )
+            )
         else:
             lag_widget.display = False
 

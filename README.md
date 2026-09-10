@@ -107,17 +107,16 @@ Quick access to operational information including:
 
 ### Monitoring
 
-Lightweight live monitoring designed for operational awareness.
+A lightweight live dashboard for operational awareness, organized into sub-tabs
+(Overview, InnoDB, Throughput, Locks, Replication). Each is a 2×2 grid of live
+braille graphs plus an instant-metrics strip, covering queries/sec, connections,
+InnoDB rows and buffer pool, statement mix, network traffic, lock contention,
+and replica lag. Graphs use a fixed 30-minute window that fills from the right.
+Metrics come from `SHOW GLOBAL STATUS` deltas (one cheap query per tick); live
+updates are on by default (`L` pauses, `I` cycles the interval).
 
-Examples:
-
-- Queries per second
-- Connections
-- InnoDB reads
-- InnoDB writes
-- Replication lag
-
-This is intentionally **not** a replacement for PMM or Grafana.
+This is intentionally **not** a replacement for PMM or Grafana — for detailed,
+historical analysis those remain the right tools.
 
 ---
 
@@ -198,8 +197,10 @@ cockpit over the `sys` schema (top queries, per-user/host activity, waits, I/O,
 table and index stats, full scans, and memory — each grid drilling down into
 related breakdown views). The live-capable tabs load once and offer opt-in live
 updates (`L`) on a configurable, shared refresh interval; all are filterable.
-Monitoring and polish are the next areas of work. See
-[`ROADMAP.md`](ROADMAP.md) for the current status of each milestone.
+Monitoring is a live dashboard of curated graphs (Overview, InnoDB, Throughput,
+Locks, Replication) for a quick "what's happening right now" glance. Polish is
+the next area of work. See [`ROADMAP.md`](ROADMAP.md) for the current status of
+each milestone.
 
 ---
 

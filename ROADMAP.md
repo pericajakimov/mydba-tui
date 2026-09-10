@@ -48,9 +48,16 @@ Implemented (continued):
   with row drill-down). The live-capable tabs load once and offer opt-in live
   updates with a configurable, shared refresh interval.
 
+Implemented (continued):
+
+- Monitoring — a live dashboard of curated braille graphs organized into
+  sub-tabs (Overview, InnoDB, Throughput, Locks, Replication), each a 2×2 grid
+  plus an instant-metrics strip. Metrics come from SHOW GLOBAL STATUS deltas;
+  graphs use a fixed 30-minute window that fills from the right; live by default
+  with a shared, cyclable refresh interval.
+
 In progress / next:
 
-- Monitoring (server activity, live metrics, lightweight graphs)
 - Polish (performance, rendering, error handling, additional themes)
 
 ---
@@ -131,14 +138,18 @@ In progress / next:
 
 ---
 
-## Milestone 6 — Monitoring 🔜 Next
+## Milestone 6 — Monitoring ✅ Done
 
-- Server activity overview
-- Connection usage
-- Queries per second
-- InnoDB reads/writes
-- Replication lag
-- Lightweight graphs
+- Overview (QPS, connections, InnoDB rows) ✅
+- InnoDB (buffer pool, flushing, row activity, lock waits) ✅
+- Throughput & Traffic (statement mix, network bytes) ✅
+- Locks & Contention (lock-wait rates, blocked sessions) ✅
+- Replication lag graph ✅
+- Fixed-window braille graphs, live by default, shared refresh interval ✅
+
+> Future: background collection while working elsewhere in the app (likely on a
+> dedicated sampling connection) so returning to Monitoring shows already-filled
+> graphs.
 
 ---
 

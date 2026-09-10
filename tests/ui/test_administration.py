@@ -6,9 +6,11 @@ from mydba_tui.ui.screens.administration import (
     ConnectionsView,
     LocksView,
     MetadataLocksView,
+    PerformanceView,
     ProcessListView,
     ReplicationView,
     StatusView,
+    TopQueriesView,
     TransactionsView,
     UsersView,
     VariablesView,
@@ -662,3 +664,142 @@ def test_cycle_interval_snaps_unknown_value_to_first_choice(monkeypatch: object)
             self.settings = Settings(refresh_interval=7)  # not a choice
 
     assert _cycle_interval(_App()) == REFRESH_INTERVAL_CHOICES[0]
+
+
+def test_top_queries_view_bindings_present() -> None:
+    """Top Queries exposes refresh, live, interval, filter, and workspace."""
+    from mydba_tui.ui.screens.administration import LiveTableView
+
+    keys: set[str] = set()
+    for cls in (TopQueriesView, LiveTableView):
+        keys.update(b.key for b in cls.BINDINGS)
+    for key in ("r", "l", "i", "slash", "w"):
+        assert key in keys, f"missing binding {key}"
+
+
+def test_perf_grid_row_helpers() -> None:
+    """A perf grid maps rows to dicts, keys, and filters by any cell."""
+    from mydba_tui.services.performance import GridData
+
+    view = TopQueriesView()
+    view._grid = GridData(
+        columns=["query", "db", "digest"],
+        rows=[["SELECT 1", "shop", "abc"], ["UPDATE t", "app", "def"]],
+    )
+
+    # Row -> dict by header.
+    assert view._row_dict(["SELECT 1", "shop", "abc"]) == {
+        "query": "SELECT 1",
+        "db": "shop",
+        "digest": "abc",
+    }
+    # Row key is stable and derived from contents.
+    assert view._row_key(["SELECT 1", "shop", "abc"]) == "SELECT 1\x00shop\x00abc"
+    # Filter matches across all cells.
+    assert view._matches(["SELECT 1", "shop", "abc"], "shop") is True
+    assert view._matches(["SELECT 1", "shop", "abc"], "nope") is False
+
+
+def test_perf_grid_starts_with_live_off() -> None:
+    """Perf grids load once and never auto-start live updates."""
+    view = TopQueriesView()
+    assert view.supports_live is True
+    assert view._live is False
+
+
+def test_performance_view_refresh_data_is_safe_without_dom() -> None:
+    """PerformanceView.refresh_data is defensive when not mounted (no crash)."""
+    # Not mounted → query_one raises internally and is swallowed; no exception.
+    view = PerformanceView()
+    view.refresh_data()
+
+
+def test_users_perf_view_breakdowns_are_wired() -> None:
+    """The Users perf view declares the five keyed breakdown views."""
+    from mydba_tui.ui.screens.administration import UsersPerfView
+
+    labels = [b.label for b in UsersPerfView._BREAKDOWNS]
+    assert labels == [
+        "Statement Latency",
+        "Statement Types",
+        "Stages",
+        "File I/O",
+        "File I/O Types",
+    ]
+    # Every breakdown points at a real .sql file under sql/admin/perf/.
+    from mydba_tui.services.sql_loader import load_sql
+
+    for spec in UsersPerfView._BREAKDOWNS:
+        sql = load_sql(spec.sql_file)
+        assert "%s" in sql  # keyed/parameterized
+        assert "/* mydba */" in sql  # tagged
+
+
+def test_hosts_perf_view_breakdowns_are_wired() -> None:
+    """The Hosts perf view declares five host-keyed breakdown views."""
+    from mydba_tui.services.sql_loader import load_sql
+    from mydba_tui.ui.screens.administration import HostsPerfView
+
+    labels = [b.label for b in HostsPerfView._BREAKDOWNS]
+    assert labels == [
+        "Statement Latency",
+        "Statement Types",
+        "Stages",
+        "File I/O",
+        "File I/O Types",
+    ]
+    for spec in HostsPerfView._BREAKDOWNS:
+        sql = load_sql(spec.sql_file)
+        assert "%s" in sql
+        assert "host" in sql.lower()
+
+
+def test_all_perf_views_start_live_off_and_load_grids() -> None:
+    """Every Performance sub-tab view is live-off by default and points at SQL."""
+    from mydba_tui.services.sql_loader import load_sql
+    from mydba_tui.ui.screens.administration import (
+        FullScansView,
+        HostsPerfView,
+        IndexesPerfView,
+        IoPerfView,
+        MemoryPerfView,
+        TablesPerfView,
+        UsersPerfView,
+        WaitsPerfView,
+    )
+
+    views = [
+        TopQueriesView,
+        UsersPerfView,
+        HostsPerfView,
+        WaitsPerfView,
+        IoPerfView,
+        TablesPerfView,
+        IndexesPerfView,
+        FullScansView,
+        MemoryPerfView,
+    ]
+    for cls in views:
+        view = cls()
+        assert view.supports_live is True
+        assert view._live is False
+
+    # Every breakdown spec across the families points at a loadable, tagged file.
+    for cls in views:
+        for spec in getattr(cls, "_BREAKDOWNS", []):
+            sql = load_sql(spec.sql_file)
+            assert "/* mydba */" in sql
+            # Keyed breakdowns must be parameterized; global-context ones must not.
+            assert ("%s" in sql) == spec.keyed
+
+
+def test_render_grid_table_states() -> None:
+    """The breakdown table renderer handles available/empty/unavailable."""
+    from mydba_tui.services.performance import GridData
+    from mydba_tui.ui.screens.administration import _render_grid_table
+
+    # Unavailable and empty both render a note (a Static), not a crash.
+    assert _render_grid_table(GridData([], [], available=False)) is not None
+    assert _render_grid_table(GridData(["a"], [], available=True)) is not None
+    # With data, it renders a table Static.
+    assert _render_grid_table(GridData(["a", "b"], [["1", "2"]], available=True)) is not None

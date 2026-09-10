@@ -42,9 +42,11 @@ Implemented (continued):
   sessions, open query in workspace), Connections (grouped counts), Transactions
   (active InnoDB transactions with statement history), InnoDB Locks and Metadata
   Locks (blocking waits with kill-blocker), Users (SQL-driven grouping with
-  grants on demand), Variables, Status, and Replication (a role/vendor-aware
-  cockpit with a live lag graph). The live-capable tabs load once and offer
-  opt-in live updates with a configurable, shared refresh interval.
+  grants on demand), Variables, Status, Replication (a role/vendor-aware
+  cockpit with a live lag graph), and Performance (sys-schema diagnostics: top
+  queries, users/hosts, waits, I/O, tables/indexes, full scans, memory, each
+  with row drill-down). The live-capable tabs load once and offer opt-in live
+  updates with a configurable, shared refresh interval.
 
 In progress / next:
 
@@ -122,6 +124,7 @@ In progress / next:
 - Variables ✅
 - Status ✅
 - Replication ✅
+- Performance (sys schema diagnostics) ✅
 
 > InnoDB Status remains documented as a future section; the core Administration
 > milestone (the sections above) is complete.

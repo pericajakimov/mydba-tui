@@ -30,6 +30,7 @@ The Administration module contains the following sections:
 - Process List
 - Users
 - Replication
+- Performance
 - Variables
 - Status
 - Locks
@@ -263,6 +264,78 @@ are on and at what interval.
 
 This section is read-only. Actions that change replication (start/stop, reset,
 skip) are intentionally left to the SQL Workspace.
+
+---
+
+# Performance
+
+The Performance section is a read-only cockpit over the MySQL `sys` schema — the
+set of diagnostic views that package raw performance_schema data into the
+questions a DBA actually asks during an incident ("what's slow, who's driving
+load, where's the I/O, which indexes are wasted"). It is a parent tab that hosts
+a family of sub-tabs, each a summary grid whose rows drill down into related
+breakdown views.
+
+## Summary grid and drill-down
+
+Every sub-tab shows a `sys` summary view as a sortable, filterable grid (the
+same live machinery as the other tabs: loads once, opt-in live updates with
+`L`, interval with `I`, manual refresh with `R`, filter with `/`). Pressing
+`Enter` on a row opens a drill-down detail keyed to that row — the sys schema's
+"summary + `_by_*` breakdowns" design surfaced directly. Each breakdown is shown
+as a sub-tab inside the detail modal.
+
+## Sub-tabs
+
+- **Top Queries** — `sys.statement_analysis`: normalized statement digests by
+  total latency (executions, avg/max latency, rows examined, tmp tables, full
+  scans). `Enter` shows the full normalized statement and a captured sample;
+  `W` sends it to the SQL Workspace to EXPLAIN.
+- **Users** — `sys.user_summary`: per-user activity. `Enter` drills into
+  statement latency, statement types, stages, and file I/O (by total and by
+  type) for that user.
+- **Hosts** — `sys.host_summary`: the same breakdowns grouped by client host.
+- **Waits** — `sys.waits_global_by_latency`: global wait events by latency.
+  `Enter` breaks a wait event down by user and by host.
+- **I/O** — `sys.io_global_by_file_by_bytes`: file I/O hotspots. `Enter` shows
+  the server-global I/O by wait type and by thread as context.
+- **Tables** — `sys.schema_table_statistics`: per-table access statistics.
+  `Enter` shows that table's index statistics and its InnoDB buffer-pool
+  footprint.
+- **Indexes** — `sys.schema_unused_indexes`: indexes with no recorded use
+  (removal candidates). `Enter` lists redundant indexes, each with a
+  ready-to-run `DROP INDEX` statement.
+- **Full Scans** — `sys.statements_with_full_table_scans`: statements that
+  scanned without an index. Same digest drill-down and `W` as Top Queries.
+- **Memory** — `sys.memory_global_by_current_bytes`: current memory by
+  allocation type. `Enter` shows current memory by user and by thread.
+
+## Availability
+
+The Performance tab depends on the `sys` schema and performance_schema. Both are
+present and enabled by default on MySQL 5.7+/8.0+, Percona, and Aurora. On
+MariaDB (which has no `sys` schema) or when a required performance_schema
+consumer/instrument is disabled, the affected grid shows an explanatory
+"unavailable" note instead of data — nothing errors.
+
+## Read-only
+
+Like the rest of Administration, this section only reads. Actionable follow-ups
+— running `EXPLAIN`, dropping a redundant index — are done by sending the
+statement to the SQL Workspace (`W` on the digest tabs) rather than executing
+anything here.
+
+## Keybindings
+
+| Key | Action |
+|-----|--------|
+| R | Refresh now |
+| L | Start / stop live updates |
+| I | Cycle the refresh interval |
+| / | Filter (Enter keeps, Esc clears) |
+| Enter | Row drill-down detail |
+| W | Open statement in SQL Workspace (Top Queries, Full Scans) |
+| Esc | Back to Object Browser |
 
 ---
 

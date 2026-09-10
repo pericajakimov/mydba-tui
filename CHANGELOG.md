@@ -14,6 +14,20 @@ The project follows the principles of **Keep a Changelog** and **Semantic Versio
 
 - Tabbed Administration screen (reached from the Object Browser with `A`),
   navigated like the Object Browser tabs.
+- Performance tab (last): a read-only cockpit over the MySQL `sys` schema with
+  nine diagnostic sub-tabs — Top Queries (statement_analysis), Users
+  (user_summary), Hosts (host_summary), Waits (waits_global_by_latency), I/O
+  (io_global_by_file_by_bytes), Tables (schema_table_statistics), Indexes
+  (schema_unused_indexes), Full Scans (statements_with_full_table_scans), and
+  Memory (memory_global_by_current_bytes). Each sub-tab is a filterable summary
+  grid with opt-in live updates; pressing Enter drills a row down into its
+  related `_by_*` breakdown views (shown as sub-tabs in a detail modal), keyed
+  to the selected user/host/wait/table. The statement tabs open the full
+  normalized statement and a captured sample, sendable to the SQL Workspace
+  (`W`) to EXPLAIN; the Indexes drill-down lists redundant indexes with
+  ready-to-run DROP statements. All queries are best-effort and tagged: the tab
+  degrades gracefully where the sys schema/performance_schema are unavailable
+  (e.g. MariaDB). Read-only.
 - Replication tab (last): a read-only, role- and vendor-aware cockpit with a
   colored health verdict (HEALTHY/LAGGING/BROKEN/PRIMARY/GALERA/STANDALONE), a
   live replica-lag graph (a dependency-free braille line-chart with a relative

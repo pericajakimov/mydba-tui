@@ -10,6 +10,8 @@ All SQL executed here is written to the SQL log for transparency.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from rich.markup import escape as rich_escape
 from rich.text import Text
 from textual import events
@@ -35,6 +37,13 @@ from mydba_tui.services.metadata_locks import (
     MDL_COLUMNS,
     MetadataLockWait,
     fetch_metadata_lock_waits,
+)
+from mydba_tui.services.performance import (
+    GridData,
+    StatementDigestSample,
+    fetch_breakdown,
+    fetch_statement_digest_sample,
+    fetch_view,
 )
 from mydba_tui.services.processlist import (
     PROCESS_COLUMNS,
@@ -2599,6 +2608,768 @@ class _KeyValueDetailScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+# --- Performance (sys schema diagnostics) ---
+
+# Max characters shown for a cell inline in a performance grid; the full value
+# is available in the row detail.
+_PERF_CELL_TRUNCATE = 60
+
+
+class PerfGridView(LiveTableView):
+    """Base for a sys-schema summary grid (Performance sub-tabs).
+
+    Renders any sys view as a generic, dynamically-columned grid on top of the
+    LiveTableView machinery (load-once, opt-in live with ``L``, interval ``I``,
+    manual ``R``, filter ``/``). Each row is a list of display strings aligned
+    to ``self._grid.columns``; ``Enter`` opens a per-family drill-down detail.
+
+    Subclasses set ``id_prefix``/``noun`` and implement ``_fetch_grid`` (the
+    summary view) and, optionally, ``_open_detail`` (the drill-down).
+    """
+
+    # Columns are discovered from the view result at runtime, so the fixed
+    # LiveTableView column list is empty.
+    columns: tuple[str, ...] = ()
+    filter_placeholder = "Filter — Enter to keep, Esc to clear"
+
+    def __init__(self) -> None:
+        """Initialize perf grid state."""
+        super().__init__()
+        self._grid: GridData = GridData(columns=[], rows=[])
+        self._table_columns: list[str] = []
+
+    # --- Subclass hooks ---
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        """Return the summary GridData. Subclasses implement."""
+        raise NotImplementedError
+
+    def _open_detail(self, row: dict[str, str]) -> None:
+        """Open the drill-down detail for a row. Subclasses may override."""
+
+    # --- LiveTableView plumbing ---
+
+    def on_mount(self) -> None:
+        """No auto-load on mount — the parent Performance tab drives loading.
+
+        Loading a hidden sub-tab's (potentially heavy) sys view when the screen
+        first mounts would be wasteful, so ``PerformanceView`` calls
+        ``refresh_data`` on the active sub-tab only when the Performance tab is
+        shown. Columns are added after the first fetch (they are dynamic).
+        """
+
+    def _fetch(self) -> list[object]:
+        conn_result = self.app.db_connection  # type: ignore[attr-defined]
+        grid = self._fetch_grid(conn_result.connection)
+        self._grid = grid
+        # Each "item" is a row; index carries the row so _row_dict can rebuild.
+        return list(grid.rows)
+
+    def _row_key(self, item: object) -> str:
+        # A row's identity is its full contents — stable enough for cursor
+        # preservation across refreshes without a natural primary key.
+        row: list[str] = item  # type: ignore[assignment]
+        return "\x00".join(row)
+
+    def _row_cells(self, item: object) -> list[Text]:
+        from mydba_tui.renderers.table import styled_cell
+
+        row: list[str] = item  # type: ignore[assignment]
+        cells: list[Text] = []
+        for value in row:
+            text = value if len(value) <= _PERF_CELL_TRUNCATE else value[:_PERF_CELL_TRUNCATE] + "…"
+            cells.append(styled_cell(text))
+        return cells
+
+    def _matches(self, item: object, needle: str) -> bool:
+        row: list[str] = item  # type: ignore[assignment]
+        return needle in " ".join(row).lower()
+
+    def _render_table(self, items: list[object]) -> None:
+        """Rebuild dynamic columns when they change, then render rows."""
+        table = self.query_one(f"#{self._table_id}", DataTable)
+        if self._grid.columns != self._table_columns:
+            table.clear(columns=True)
+            for col in self._grid.columns:
+                table.add_column(col, key=col)
+            self._table_columns = list(self._grid.columns)
+        super()._render_table(items)
+
+    def _update_info(self, shown: int, total: int) -> None:
+        """Info line; note when the source view is unavailable."""
+        if not self._grid.available:
+            self._show_message(
+                "[yellow]Unavailable — this view needs the sys schema and "
+                "performance_schema (absent on MariaDB or when disabled).[/yellow]"
+            )
+            return
+        super()._update_info(shown, total)
+
+    def _row_dict(self, item: object) -> dict[str, str]:
+        """Map a row to a {column: value} dict using the grid's headers."""
+        row: list[str] = item  # type: ignore[assignment]
+        return dict(zip(self._grid.columns, row, strict=False))
+
+    def action_show_detail(self) -> None:
+        """Open the drill-down detail for the selected row."""
+        item = self._selected_item()
+        if item is None:
+            self.notify("No row selected.", severity="warning")
+            return
+        self._open_detail(self._row_dict(item))
+
+
+class TopQueriesView(PerfGridView):
+    """Top Queries — normalized statement digests by total latency."""
+
+    BINDINGS = [
+        *LiveTableView.LIVE_BINDINGS,
+        Binding("w", "open_in_workspace", "To Workspace", key_display="W"),
+    ]
+
+    id_prefix = "perf-stmts"
+    noun = "statements"
+    filter_placeholder = "Filter (query, db) — Enter to keep, Esc to clear"
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        return fetch_view(
+            connection,  # type: ignore[arg-type]
+            "admin/perf/statement_analysis.sql",
+            "administration.performance.statements",
+        )
+
+    def _open_detail(self, row: dict[str, str]) -> None:
+        digest = row.get("digest", "")
+        self.app.push_screen(_StatementDetailScreen(digest, row.get("query", "")))
+
+    def action_open_in_workspace(self) -> None:
+        """Open the selected statement's sample/normalized text in the Workspace."""
+        item = self._selected_item()
+        if item is None:
+            self.notify("No row selected.", severity="warning")
+            return
+        row = self._row_dict(item)
+        digest = row.get("digest", "")
+
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        text = row.get("query", "")
+        if digest and isinstance(conn_result, ConnectionResult):
+            sample = fetch_statement_digest_sample(conn_result.connection, digest)
+            if sample is not None:
+                text = sample.sample_text or sample.digest_text or text
+
+        if not text.strip():
+            self.notify("No statement text available.", severity="information")
+            return
+        snippet = "-- Statement from Performance → Top Queries\n" + text
+        try:
+            workspace = self.app.get_screen("workspace", WorkspaceScreen)
+        except Exception:
+            self.notify("SQL Workspace unavailable.", severity="error")
+            return
+        workspace.load_query(snippet)
+        self.app.push_screen("workspace")
+
+
+class _StatementDetailScreen(ModalScreen[None]):
+    """Modal showing a statement digest's full normalized text and a sample."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", key_display="Esc"),
+    ]
+
+    CSS = """
+    _StatementDetailScreen {
+        align: center middle;
+        background: $background 80%;
+    }
+
+    #detail-container {
+        width: 85%;
+        max-width: 130;
+        height: auto;
+        max-height: 85%;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+
+    #detail-title {
+        text-style: bold;
+        padding-bottom: 1;
+    }
+
+    .detail-section {
+        text-style: bold;
+        color: $accent;
+        padding-top: 1;
+    }
+
+    .detail-sql {
+        height: auto;
+        padding: 0 0 1 1;
+    }
+    """
+
+    def __init__(self, digest: str, fallback_query: str) -> None:
+        """Initialize with the digest and the grid's (truncated) query text."""
+        super().__init__()
+        self._digest = digest
+        self._fallback_query = fallback_query
+
+    def compose(self) -> ComposeResult:
+        """Build the statement detail modal."""
+        from mydba_tui.ui.mysql_highlight import highlight_mysql
+
+        sample = self._load_sample()
+        with VerticalScroll(id="detail-container"):
+            yield Static("Statement digest", id="detail-title")
+            if sample is None:
+                meta = f"[bold]Digest:[/bold] {_meta_value(self._digest)}"
+                yield Static(meta, classes="detail-sql")
+                yield Static("[bold]Normalized[/bold]", classes="detail-section")
+                yield Static(highlight_mysql(self._fallback_query or "—"), classes="detail-sql")
+                return
+            meta_lines = [
+                f"[bold]Digest:[/bold] {_meta_value(self._digest)}",
+                f"[bold]Schema:[/bold] {_meta_value(sample.schema_name)}",
+                f"[bold]Executions:[/bold] {_meta_value(sample.exec_count)}",
+                f"[bold]First seen:[/bold] {_meta_value(sample.first_seen)}",
+                f"[bold]Last seen:[/bold] {_meta_value(sample.last_seen)}",
+            ]
+            yield Static("\n".join(meta_lines), classes="detail-sql")
+            yield Static("[bold]Normalized statement[/bold]", classes="detail-section")
+            yield Static(
+                highlight_mysql(sample.digest_text or self._fallback_query or "—"),
+                classes="detail-sql",
+            )
+            yield Static("[bold]Sample statement[/bold]", classes="detail-section")
+            if sample.sample_text.strip():
+                yield Static(highlight_mysql(sample.sample_text), classes="detail-sql")
+            else:
+                yield Static("[dim]No sample captured.[/dim]", classes="detail-sql")
+
+    def _load_sample(self) -> StatementDigestSample | None:
+        """Fetch the digest's full text and sample on demand (best-effort)."""
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if not self._digest or not isinstance(conn_result, ConnectionResult):
+            return None
+        return fetch_statement_digest_sample(conn_result.connection, self._digest)
+
+    def action_close(self) -> None:
+        """Dismiss the modal."""
+        self.dismiss(None)
+
+
+@dataclass(frozen=True)
+class _BreakdownSpec:
+    """One drill-down breakdown view shown as a sub-tab in a detail modal.
+
+    Attributes:
+        label: Sub-tab title.
+        sql_file: Breakdown query file (``sql/…``). When ``keyed`` is True it has
+            a single ``%s`` marker bound to the selected row's key.
+        source: SQL-log source label.
+        keyed: When True (default) the query is parameterized by the row key;
+            when False it is a global view shown as related context (e.g. the
+            I/O family, whose breakdowns are server-global, not per-file).
+    """
+
+    label: str
+    sql_file: str
+    source: str
+    keyed: bool = True
+
+
+def _render_grid_table(grid: GridData) -> Static:
+    """Render a GridData as an aligned Rich table inside a Static.
+
+    Used inside detail modals so a breakdown view is shown compactly without a
+    full DataTable widget. Explains empty/unavailable results.
+    """
+    from rich.table import Table
+
+    if not grid.available:
+        return Static(
+            "[dim]Unavailable — needs the sys schema and performance_schema.[/dim]",
+            classes="detail-sql",
+        )
+    if grid.empty:
+        return Static("[dim]No data.[/dim]", classes="detail-sql")
+
+    table: Table = Table(expand=True, show_edge=False, pad_edge=False)
+    for col in grid.columns:
+        table.add_column(col, overflow="fold")
+    for row in grid.rows:
+        table.add_row(*row)
+    return Static(table, classes="detail-sql")
+
+
+class _BreakdownDetailScreen(ModalScreen[None]):
+    """Generic drill-down modal: breakdown views as sub-tabs, keyed to a row.
+
+    Given a subject key (e.g. a user or host) and a list of breakdown specs,
+    each breakdown is fetched on demand (best-effort, parameterized by the key)
+    and shown in its own sub-tab. Reused by the Performance families that follow
+    the sys-schema "summary + _by_* breakdowns" pattern.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", key_display="Esc"),
+    ]
+
+    CSS = """
+    _BreakdownDetailScreen {
+        align: center middle;
+        background: $background 80%;
+    }
+
+    #detail-container {
+        width: 85%;
+        max-width: 140;
+        height: 80%;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+
+    #detail-title {
+        text-style: bold;
+        padding-bottom: 1;
+    }
+
+    #detail-tabs {
+        height: 1fr;
+    }
+
+    .detail-sql {
+        height: auto;
+        padding: 0 0 1 0;
+    }
+    """
+
+    def __init__(self, title: str, params: tuple[str, ...], specs: list[_BreakdownSpec]) -> None:
+        """Initialize with the modal title, the drill-down params, and specs.
+
+        ``params`` are bound (in order) to the ``%s`` markers of each keyed
+        breakdown — one value for a single-key family (user/host/event), or
+        several for a composite key (e.g. schema + table).
+        """
+        super().__init__()
+        self._title = title
+        self._params = params
+        self._specs = specs
+
+    def compose(self) -> ComposeResult:
+        """Build the detail modal with one sub-tab per breakdown."""
+        with Vertical(id="detail-container"):
+            yield Static(self._title, id="detail-title")
+            with TabbedContent(id="detail-tabs"):
+                for i, spec in enumerate(self._specs):
+                    with TabPane(spec.label, id=f"detail-bd-{i}"):
+                        yield _render_grid_table(self._fetch(spec))
+
+    def _fetch(self, spec: _BreakdownSpec) -> GridData:
+        """Run one breakdown (keyed to the subject) or global context view."""
+        from mydba_tui.connection import ConnectionResult
+
+        conn_result = getattr(self.app, "db_connection", None)
+        if not isinstance(conn_result, ConnectionResult):
+            return GridData(columns=[], rows=[], available=False)
+        if spec.keyed:
+            return fetch_breakdown(conn_result.connection, spec.sql_file, self._params, spec.source)
+        return fetch_view(conn_result.connection, spec.sql_file, spec.source)
+
+    def action_close(self) -> None:
+        """Dismiss the modal."""
+        self.dismiss(None)
+
+
+class UsersPerfView(PerfGridView):
+    """Performance > Users — per-user activity summary with drill-down."""
+
+    BINDINGS = [*LiveTableView.LIVE_BINDINGS]
+
+    id_prefix = "perf-users"
+    noun = "users"
+    filter_placeholder = "Filter (user) — Enter to keep, Esc to clear"
+
+    _BREAKDOWNS = [
+        _BreakdownSpec(
+            "Statement Latency",
+            "admin/perf/user_summary_by_statement_latency.sql",
+            "administration.performance.user.statement_latency",
+        ),
+        _BreakdownSpec(
+            "Statement Types",
+            "admin/perf/user_summary_by_statement_type.sql",
+            "administration.performance.user.statement_type",
+        ),
+        _BreakdownSpec(
+            "Stages",
+            "admin/perf/user_summary_by_stages.sql",
+            "administration.performance.user.stages",
+        ),
+        _BreakdownSpec(
+            "File I/O",
+            "admin/perf/user_summary_by_file_io.sql",
+            "administration.performance.user.file_io",
+        ),
+        _BreakdownSpec(
+            "File I/O Types",
+            "admin/perf/user_summary_by_file_io_type.sql",
+            "administration.performance.user.file_io_type",
+        ),
+    ]
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        return fetch_view(
+            connection,  # type: ignore[arg-type]
+            "admin/perf/user_summary.sql",
+            "administration.performance.users",
+        )
+
+    def _open_detail(self, row: dict[str, str]) -> None:
+        user = row.get("user", "")
+        if not user:
+            self.notify("No user for this row.", severity="warning")
+            return
+        self.app.push_screen(_BreakdownDetailScreen(f"User: {user}", (user,), self._BREAKDOWNS))
+
+
+class HostsPerfView(PerfGridView):
+    """Performance > Hosts — per-host activity summary with drill-down."""
+
+    BINDINGS = [*LiveTableView.LIVE_BINDINGS]
+
+    id_prefix = "perf-hosts"
+    noun = "hosts"
+    filter_placeholder = "Filter (host) — Enter to keep, Esc to clear"
+
+    _BREAKDOWNS = [
+        _BreakdownSpec(
+            "Statement Latency",
+            "admin/perf/host_summary_by_statement_latency.sql",
+            "administration.performance.host.statement_latency",
+        ),
+        _BreakdownSpec(
+            "Statement Types",
+            "admin/perf/host_summary_by_statement_type.sql",
+            "administration.performance.host.statement_type",
+        ),
+        _BreakdownSpec(
+            "Stages",
+            "admin/perf/host_summary_by_stages.sql",
+            "administration.performance.host.stages",
+        ),
+        _BreakdownSpec(
+            "File I/O",
+            "admin/perf/host_summary_by_file_io.sql",
+            "administration.performance.host.file_io",
+        ),
+        _BreakdownSpec(
+            "File I/O Types",
+            "admin/perf/host_summary_by_file_io_type.sql",
+            "administration.performance.host.file_io_type",
+        ),
+    ]
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        return fetch_view(
+            connection,  # type: ignore[arg-type]
+            "admin/perf/host_summary.sql",
+            "administration.performance.hosts",
+        )
+
+    def _open_detail(self, row: dict[str, str]) -> None:
+        host = row.get("host", "")
+        if not host:
+            self.notify("No host for this row.", severity="warning")
+            return
+        self.app.push_screen(_BreakdownDetailScreen(f"Host: {host}", (host,), self._BREAKDOWNS))
+
+
+class WaitsPerfView(PerfGridView):
+    """Performance > Waits — global wait events with per-user/host drill-down."""
+
+    BINDINGS = [*LiveTableView.LIVE_BINDINGS]
+
+    id_prefix = "perf-waits"
+    noun = "wait events"
+    filter_placeholder = "Filter (event) — Enter to keep, Esc to clear"
+
+    _BREAKDOWNS = [
+        _BreakdownSpec(
+            "By User",
+            "admin/perf/waits_by_user_by_latency.sql",
+            "administration.performance.wait.by_user",
+        ),
+        _BreakdownSpec(
+            "By Host",
+            "admin/perf/waits_by_host_by_latency.sql",
+            "administration.performance.wait.by_host",
+        ),
+    ]
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        return fetch_view(
+            connection,  # type: ignore[arg-type]
+            "admin/perf/waits_global_by_latency.sql",
+            "administration.performance.waits",
+        )
+
+    def _open_detail(self, row: dict[str, str]) -> None:
+        # The global view names the column `events`; the breakdowns key on it
+        # as `event`.
+        event = row.get("events", "")
+        if not event:
+            self.notify("No wait event for this row.", severity="warning")
+            return
+        self.app.push_screen(_BreakdownDetailScreen(f"Wait: {event}", (event,), self._BREAKDOWNS))
+
+
+class IoPerfView(PerfGridView):
+    """Performance > I/O — file I/O hotspots with global I/O context."""
+
+    BINDINGS = [*LiveTableView.LIVE_BINDINGS]
+
+    id_prefix = "perf-io"
+    noun = "files"
+    filter_placeholder = "Filter (file) — Enter to keep, Esc to clear"
+
+    # These breakdowns are server-global (not per-file), shown as related I/O
+    # context alongside the selected file.
+    _BREAKDOWNS = [
+        _BreakdownSpec(
+            "I/O by Wait Type",
+            "admin/perf/io_global_by_wait_by_latency.sql",
+            "administration.performance.io.by_wait",
+            keyed=False,
+        ),
+        _BreakdownSpec(
+            "I/O by Thread",
+            "admin/perf/io_by_thread_by_latency.sql",
+            "administration.performance.io.by_thread",
+            keyed=False,
+        ),
+    ]
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        return fetch_view(
+            connection,  # type: ignore[arg-type]
+            "admin/perf/io_global_by_file_by_bytes.sql",
+            "administration.performance.io",
+        )
+
+    def _open_detail(self, row: dict[str, str]) -> None:
+        file = row.get("file", "")
+        title = f"I/O: {file}" if file else "I/O context"
+        # Global context breakdowns; params unused (keyed=False).
+        self.app.push_screen(_BreakdownDetailScreen(title, (), self._BREAKDOWNS))
+
+
+class TablesPerfView(PerfGridView):
+    """Performance > Tables — per-table access stats with index/buffer drill-down."""
+
+    BINDINGS = [*LiveTableView.LIVE_BINDINGS]
+
+    id_prefix = "perf-tables"
+    noun = "tables"
+    filter_placeholder = "Filter (schema, table) — Enter to keep, Esc to clear"
+
+    _BREAKDOWNS = [
+        _BreakdownSpec(
+            "Indexes",
+            "admin/perf/schema_index_statistics.sql",
+            "administration.performance.table.indexes",
+        ),
+        _BreakdownSpec(
+            "Buffer Pool",
+            "admin/perf/schema_table_statistics_with_buffer.sql",
+            "administration.performance.table.buffer",
+        ),
+    ]
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        return fetch_view(
+            connection,  # type: ignore[arg-type]
+            "admin/perf/schema_table_statistics.sql",
+            "administration.performance.tables",
+        )
+
+    def _open_detail(self, row: dict[str, str]) -> None:
+        schema = row.get("table_schema", "")
+        table = row.get("table_name", "")
+        if not schema or not table:
+            self.notify("No table for this row.", severity="warning")
+            return
+        self.app.push_screen(
+            _BreakdownDetailScreen(f"{schema}.{table}", (schema, table), self._BREAKDOWNS)
+        )
+
+
+class IndexesPerfView(PerfGridView):
+    """Performance > Indexes — unused indexes, with redundant indexes as context."""
+
+    BINDINGS = [*LiveTableView.LIVE_BINDINGS]
+
+    id_prefix = "perf-indexes"
+    noun = "unused indexes"
+    filter_placeholder = "Filter (schema, table, index) — Enter to keep, Esc to clear"
+
+    _BREAKDOWNS = [
+        _BreakdownSpec(
+            "Redundant Indexes",
+            "admin/perf/schema_redundant_indexes.sql",
+            "administration.performance.index.redundant",
+            keyed=False,
+        ),
+    ]
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        return fetch_view(
+            connection,  # type: ignore[arg-type]
+            "admin/perf/schema_unused_indexes.sql",
+            "administration.performance.indexes",
+        )
+
+    def _open_detail(self, row: dict[str, str]) -> None:
+        # Redundant indexes is a server-global list (with DROP statements),
+        # shown as related index-housekeeping context.
+        self.app.push_screen(_BreakdownDetailScreen("Redundant Indexes", (), self._BREAKDOWNS))
+
+
+class FullScansView(TopQueriesView):
+    """Performance > Full Scans — statements that scanned tables without an index.
+
+    Shares Top Queries' digest drill-down (full text + sample, open in
+    Workspace); only the summary view differs.
+    """
+
+    id_prefix = "perf-fullscans"
+    noun = "statements"
+    filter_placeholder = "Filter (query, db) — Enter to keep, Esc to clear"
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        return fetch_view(
+            connection,  # type: ignore[arg-type]
+            "admin/perf/statements_with_full_table_scans.sql",
+            "administration.performance.full_scans",
+        )
+
+
+class MemoryPerfView(PerfGridView):
+    """Performance > Memory — current memory by allocation type, with context."""
+
+    BINDINGS = [*LiveTableView.LIVE_BINDINGS]
+
+    id_prefix = "perf-memory"
+    noun = "allocation types"
+    filter_placeholder = "Filter (event) — Enter to keep, Esc to clear"
+
+    # Global context breakdowns (not per-event): who holds memory right now.
+    _BREAKDOWNS = [
+        _BreakdownSpec(
+            "By User",
+            "admin/perf/memory_by_user_by_current_bytes.sql",
+            "administration.performance.memory.by_user",
+            keyed=False,
+        ),
+        _BreakdownSpec(
+            "By Thread",
+            "admin/perf/memory_by_thread_by_current_bytes.sql",
+            "administration.performance.memory.by_thread",
+            keyed=False,
+        ),
+    ]
+
+    def _fetch_grid(self, connection: object) -> GridData:
+        return fetch_view(
+            connection,  # type: ignore[arg-type]
+            "admin/perf/memory_global_by_current_bytes.sql",
+            "administration.performance.memory",
+        )
+
+    def _open_detail(self, row: dict[str, str]) -> None:
+        event = row.get("event_name", "")
+        title = f"Memory: {event}" if event else "Memory context"
+        self.app.push_screen(_BreakdownDetailScreen(title, (), self._BREAKDOWNS))
+
+
+class PerformanceView(Vertical):
+    """Performance — sys-schema diagnostics, organized as a family of sub-tabs.
+
+    Each sub-tab is a summary grid whose rows drill down into keyed breakdown
+    views. Read-only; the sys schema and performance_schema must be available
+    (absent/limited on MariaDB), and unavailable sub-tabs show a note.
+    """
+
+    DEFAULT_CSS = """
+    PerformanceView {
+        height: 1fr;
+    }
+
+    PerformanceView TabPane {
+        padding: 0;
+        height: 1fr;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        """Build the Performance sub-tab layout."""
+        with TabbedContent(id="perf-tabs"):
+            with TabPane("Top Queries", id="perf-tab-topqueries"):
+                yield TopQueriesView()
+            with TabPane("Users", id="perf-tab-users"):
+                yield UsersPerfView()
+            with TabPane("Hosts", id="perf-tab-hosts"):
+                yield HostsPerfView()
+            with TabPane("Waits", id="perf-tab-waits"):
+                yield WaitsPerfView()
+            with TabPane("I/O", id="perf-tab-io"):
+                yield IoPerfView()
+            with TabPane("Tables", id="perf-tab-tables"):
+                yield TablesPerfView()
+            with TabPane("Indexes", id="perf-tab-indexes"):
+                yield IndexesPerfView()
+            with TabPane("Full Scans", id="perf-tab-fullscans"):
+                yield FullScansView()
+            with TabPane("Memory", id="perf-tab-memory"):
+                yield MemoryPerfView()
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Load the newly activated sub-tab's grid, but only while visible.
+
+        This fires during initial mount too (for the default sub-tab); loading
+        then would query for a hidden tab, so we only act when the Performance
+        tab is the active Administration tab.
+        """
+        event.stop()
+        if not _view_is_active_tab(self):
+            return
+        pane = event.tabbed_content.get_pane(event.tab)
+        if pane is None:
+            return
+        for live in pane.walk_children(LiveTableView):
+            live.refresh_data()
+
+    def refresh_data(self) -> None:
+        """Load the currently active sub-tab when the Performance tab is shown."""
+        try:
+            tabs = self.query_one("#perf-tabs", TabbedContent)
+        except Exception:
+            return
+        active = tabs.active_pane
+        if active is None:
+            return
+        for live in active.walk_children(LiveTableView):
+            live.refresh_data()
+
+
 class AdministrationScreen(Screen[None]):
     """Administration — tabbed operational views (Process List, Variables, ...)."""
 
@@ -2650,6 +3421,8 @@ class AdministrationScreen(Screen[None]):
                 yield StatusView()
             with TabPane("Replication", id="tab-replication"):
                 yield ReplicationView()
+            with TabPane("Performance", id="tab-performance"):
+                yield PerformanceView()
         yield Footer()
 
     def on_mount(self) -> None:
@@ -2664,6 +3437,13 @@ class AdministrationScreen(Screen[None]):
         """Refresh the newly activated tab's data (respects each view's policy)."""
         pane = event.tabbed_content.get_pane(event.tab)
         if pane is None:
+            return
+        # The Performance tab manages its own sub-tabs; refresh only its active
+        # sub-tab (and don't also match its inner grids via walk_children).
+        perf = list(pane.walk_children(PerformanceView))
+        if perf:
+            for pv in perf:
+                pv.refresh_data()
             return
         for view in pane.walk_children(KeyValueView):
             view.refresh_data()

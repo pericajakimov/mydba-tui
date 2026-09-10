@@ -94,6 +94,7 @@ Quick access to operational information including:
 - Process List
 - Users
 - Replication
+- Performance (sys schema diagnostics)
 - Variables
 - Status
 - Locks
@@ -190,13 +191,15 @@ kill a query or connection, open a session's query in the SQL Workspace), a
 Connections overview (counts grouped by user and host), a Transactions view
 (active InnoDB transactions with statement history), InnoDB Locks and Metadata
 Locks views (blocking waits with kill-the-blocker), a Users view (accounts
-grouped by role with grants on demand), Variables and Status browsers, and a
+grouped by role with grants on demand), Variables and Status browsers, a
 Replication cockpit (role- and vendor-aware, with a live replica-lag graph,
-per-channel status, binary logs, GTID, and Galera/PXC state). The live-capable
-tabs load once and offer opt-in live updates (`L`) on a configurable, shared
-refresh interval; all are filterable. Monitoring and polish are the next areas
-of work. See [`ROADMAP.md`](ROADMAP.md) for the current status of each
-milestone.
+per-channel status, binary logs, GTID, and Galera/PXC state), and a Performance
+cockpit over the `sys` schema (top queries, per-user/host activity, waits, I/O,
+table and index stats, full scans, and memory — each grid drilling down into
+related breakdown views). The live-capable tabs load once and offer opt-in live
+updates (`L`) on a configurable, shared refresh interval; all are filterable.
+Monitoring and polish are the next areas of work. See
+[`ROADMAP.md`](ROADMAP.md) for the current status of each milestone.
 
 ---
 
